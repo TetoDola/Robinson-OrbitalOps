@@ -81,7 +81,7 @@ CRUSOE_API_KEY=<provided by environment>
 Recommended default model for text-only Commander polishing:
 
 ```text
-deepseek-ai/Deepseek-V4-Flash
+deepseek-ai/DeepSeek-V4-Flash
 ```
 
 Use an exact model string from `../CRUSOE.md`. Do not guess model names.
@@ -2474,7 +2474,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
-      CRUSOE_MODEL: deepseek-ai/Deepseek-V4-Flash
+      CRUSOE_MODEL: deepseek-ai/DeepSeek-V4-Flash
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-false}
     depends_on:
       postgres:
@@ -2502,7 +2502,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
-      CRUSOE_MODEL: deepseek-ai/Deepseek-V4-Flash
+      CRUSOE_MODEL: deepseek-ai/DeepSeek-V4-Flash
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-false}
     depends_on:
       postgres:
