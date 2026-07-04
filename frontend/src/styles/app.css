@@ -44,6 +44,7 @@
     position: fixed;
     inset: 0;
     z-index: 0;
+    pointer-events: auto;
   }
 
   body::before {
@@ -65,6 +66,7 @@
     inset: 0;
     z-index: 0;
     display: block;
+    pointer-events: auto;
     touch-action: none;
   }
 

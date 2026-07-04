@@ -235,7 +235,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   reticle.type = "button";
   reticle.setAttribute("aria-label", "Inspect AKJA-01 satellite");
   reticle.innerHTML = '<span class="sat-reticle-label">AKJA-01</span>';
-  container.appendChild(reticle);
+  document.body.appendChild(reticle);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -634,12 +634,23 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   };
 
   const onCanvasClick = (event: MouseEvent) => {
-    if (intersectSatellite(event)) {
-      setInspection(true);
+    const hitSatellite = intersectSatellite(event);
+    if (hitSatellite) {
+      setInspection(!satelliteSelected);
+      return;
+    }
+    if (satelliteSelected) {
+      setInspection(false);
     }
   };
 
-  const onReticleClick = () => setInspection(true);
+  const onReticleClick = () => setInspection(!satelliteSelected);
+
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && satelliteSelected) {
+      setInspection(false);
+    }
+  };
 
   renderer.domElement.addEventListener("pointermove", onPointerMove);
   renderer.domElement.addEventListener("pointerdown", onPointerDown);
@@ -648,6 +659,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   renderer.domElement.addEventListener("click", onCanvasClick);
   reticle.addEventListener("click", onReticleClick);
   window.addEventListener("resize", resize);
+  window.addEventListener("keydown", onKeyDown);
 
   const unsubscribers = [
     useWorldStore.subscribe((state) => state.worldState, updateWorldState),
@@ -685,6 +697,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
       renderer.domElement.removeEventListener("click", onCanvasClick);
       reticle.removeEventListener("click", onReticleClick);
+      window.removeEventListener("keydown", onKeyDown);
       unsubscribers.forEach((unsubscribe) => unsubscribe());
       controls.dispose();
       scene.traverse(disposeObject);
