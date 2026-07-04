@@ -35,6 +35,7 @@ async def emit_agent_status(
     result = await session.execute(select(AgentStatus).where(AgentStatus.agent == agent_name))
     row = result.scalar_one_or_none()
     if row is not None:
+        now = datetime.now(timezone.utc)
         row.display_name = display_name
         row.status = status
         row.phase = phase
@@ -42,6 +43,7 @@ async def emit_agent_status(
         row.message = message
         row.linked_mission_patch_id = linked_mission_patch_id
         row.updated_by = agent_name
+        row.updated_at = now
 
     event = AgentStatusEvent(
         scenario_run_id=DEMO_SCENARIO_RUN_ID,

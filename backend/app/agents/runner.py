@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from app.agents.commander_agent import build_phase3_patch
+from app.agents.domain_agents import emit_phase4_heartbeats_once, run_remaining_agents_once
 from app.agents.power_orbit_agent import run_once as run_power_orbit_once
 from app.constants import StreamName
 from app.services.bootstrap import wait_for_database_ready, wait_for_redis_ready
@@ -35,7 +37,8 @@ async def process_once() -> bool:
         message_id, _fields = stream_messages[0]
 
     finding = await run_power_orbit_once()
-    if finding is not None:
+    remaining_findings = await run_remaining_agents_once()
+    if finding is not None or remaining_findings:
         await build_phase3_patch()
 
     async with get_redis() as redis:
@@ -47,7 +50,12 @@ async def run_forever() -> None:
     await wait_for_database_ready()
     await wait_for_redis_ready()
     await ensure_group(StreamName.telemetry_events.value, "agents")
+    last_heartbeat = 0.0
     while True:
+        now = time.monotonic()
+        if now - last_heartbeat >= 10:
+            await emit_phase4_heartbeats_once()
+            last_heartbeat = now
         processed = await process_once()
         if not processed:
             await asyncio.sleep(0.25)
