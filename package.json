@@ -1,28 +1,17 @@
 {
-  "name": "ai-website-clone-template",
-  "version": "0.3.1",
+  "name": "robinson-orbitalops",
+  "version": "0.1.0",
   "private": true,
-  "description": "Clone any website into a clean, modern Next.js codebase using AI coding agents",
-  "author": "JCodesMore",
+  "description": "Robinson — landing (clone Terminal Industries) + démo OrbitOps, command center multi-agent pour datacenters orbitaux",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JCodesMore/ai-website-cloner-template.git"
+    "url": "https://github.com/TetoDola/Robinson-OrbitalOps.git"
   },
-  "homepage": "https://github.com/JCodesMore/ai-website-cloner-template",
+  "homepage": "https://github.com/TetoDola/Robinson-OrbitalOps",
   "bugs": {
-    "url": "https://github.com/JCodesMore/ai-website-cloner-template/issues"
+    "url": "https://github.com/TetoDola/Robinson-OrbitalOps/issues"
   },
-  "keywords": [
-    "claude-code",
-    "website-clone",
-    "reverse-engineering",
-    "nextjs",
-    "ai",
-    "template",
-    "tailwindcss",
-    "shadcn-ui"
-  ],
   "engines": {
     "node": ">=24"
   },

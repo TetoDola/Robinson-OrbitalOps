@@ -11,15 +11,14 @@ npm run dev
 
 - Landing : http://localhost:3000
 - Démo live : http://localhost:3000/demo (iframe → `public/demo.html`)
-- Démo standalone : ouvrir `frontend/satellite-orbit.html` (GeoJSON relatif dans `frontend/geo/`)
+- Démo standalone : ouvrir directement `public/demo.html` (le GeoJSON est chargé en relatif depuis `public/geo/`, donc ça marche aussi en `file://`)
 
 ## Structure
 
 | Dossier | Contenu |
 |---------|---------|
 | `src/` | Next.js 16 — landing Terminal Industries + route `/demo` |
-| `public/` | Assets (fonts, images, videos), `demo.html`, `geo/ne_50m_land.geojson` |
-| `frontend/` | Démo HTML autonome (`satellite-orbit.html`) pour usage hors Next.js |
+| `public/` | Assets (fonts, images, videos), `demo.html` (démo Three.js autonome), `geo/ne_50m_land.geojson` |
 | `docs/` | Specs, captures, recherche clone |
 
 ## Stack
