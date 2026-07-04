@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.agents.commander_agent import PATCH_ACTIONS
+from app.agents.commander_agent import build_mission_patch_actions
 from app.agents.power_orbit_agent import build_power_orbit_finding
 from app.constants import CANONICAL_WORLD_STATE
 from app.services.command_executor import apply_action_to_state
@@ -17,21 +17,32 @@ def test_power_orbit_agent_builds_finding_from_seeded_demo_state() -> None:
 
 
 def test_commander_patch_actions_are_executable_command_types() -> None:
-    assert [action["type"] for action in PATCH_ACTIONS] == [
-        "increase_checkpoint_frequency",
+    finding = build_power_orbit_finding(CANONICAL_WORLD_STATE)
+    assert finding is not None
+
+    actions = build_mission_patch_actions(CANONICAL_WORLD_STATE, [finding])
+
+    assert [action["type"] for action in actions] == [
+        "mark_checkpoint_suspect",
+        "rollback_training",
         "set_gpu_power_limit",
+        "increase_checkpoint_frequency",
         "transfer_priority",
     ]
 
 
 def test_executor_maps_patch_actions_to_world_state_patches() -> None:
-    checkpoint_patch = apply_action_to_state(PATCH_ACTIONS[0])
-    power_patch = apply_action_to_state(PATCH_ACTIONS[1])
-    transfer_patch = apply_action_to_state(PATCH_ACTIONS[2])
+    finding = build_power_orbit_finding(CANONICAL_WORLD_STATE)
+    assert finding is not None
+    actions = build_mission_patch_actions(CANONICAL_WORLD_STATE, [finding])
+    patches = {action["type"]: apply_action_to_state(action) for action in actions}
 
-    assert checkpoint_patch["training"]["checkpoint_interval_minutes"] == 15
-    assert power_patch["training"]["throughput_mode"] == "reduced_safe"
-    assert transfer_patch["downlink"]["queue"][0] == "checkpoint_manifest"
+    assert all(patches[action["type"]] for action in actions)
+    assert patches["mark_checkpoint_suspect"]["training"]["quarantined_checkpoint"] == "ckpt-184900"
+    assert patches["rollback_training"]["training"]["current_step"] == 184500
+    assert patches["increase_checkpoint_frequency"]["training"]["checkpoint_interval_minutes"] == 15
+    assert patches["set_gpu_power_limit"]["training"]["throughput_mode"] == "reduced_safe"
+    assert patches["transfer_priority"]["downlink"]["queue"][0] == "checkpoint_manifest"
 
 
 def test_websocket_has_ui_event_broadcast_loop() -> None:

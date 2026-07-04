@@ -18,6 +18,37 @@ from app.services.world_state import write_world_state
 
 def apply_action_to_state(action: dict) -> dict:
     action_type = action["type"]
+    if action_type == "mark_checkpoint_suspect":
+        return {"training": {"latest_checkpoint_status": "suspect", "quarantined_checkpoint": action["checkpoint_id"]}}
+    if action_type == "rollback_training":
+        return {
+            "training": {
+                "job_id": action["job_id"],
+                "status": "recovering",
+                "current_step": _checkpoint_step(action["checkpoint_id"]),
+                "recovery_checkpoint": action["checkpoint_id"],
+            }
+        }
+    if action_type == "cordon_node":
+        return {"node_overrides": {action["node_id"]: {"status": "cordoned", "scope": action["scope"]}}}
+    if action_type == "mark_node_suspect":
+        return {"node_overrides": {action["node_id"]: {"status": "suspect", "reason": action["reason"]}}}
+    if action_type == "snapshot_evidence":
+        return {
+            "forensics": {
+                "snapshot_status": "captured",
+                "asset_ids": action["asset_ids"],
+                "include": action["include"],
+            }
+        }
+    if action_type == "run_health_check":
+        return {
+            "verification": {
+                "asset_id": action["asset_id"],
+                "check_suite": action["check_suite"],
+                "status": "passed",
+            }
+        }
     if action_type == "set_gpu_power_limit":
         return {"power": {"mode": "degraded_safe"}, "training": {"throughput_mode": "reduced_safe"}}
     if action_type == "increase_checkpoint_frequency":
@@ -30,6 +61,13 @@ def apply_action_to_state(action: dict) -> dict:
             }
         }
     return {}
+
+
+def _checkpoint_step(checkpoint_id: str) -> int:
+    try:
+        return int(checkpoint_id.rsplit("-", 1)[1])
+    except (IndexError, ValueError):
+        return 0
 
 
 async def execute_queued_commands_once() -> int:
