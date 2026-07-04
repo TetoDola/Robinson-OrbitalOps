@@ -276,6 +276,7 @@ Use one table for current state and one table for history:
 ```sql
 CREATE TABLE world_state_current (
   id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   version BIGINT NOT NULL DEFAULT 0,
   state JSONB NOT NULL,
   updated_by TEXT NOT NULL,
@@ -283,11 +284,14 @@ CREATE TABLE world_state_current (
 );
 
 CREATE TABLE world_state_snapshots (
-  version BIGINT PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
+  version BIGINT NOT NULL,
   state JSONB NOT NULL,
   reason TEXT NOT NULL,
   created_by TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (scenario_run_id, version)
 );
 ```
 
@@ -354,6 +358,7 @@ Outbox table:
 ```sql
 CREATE TABLE outbox_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   event_type TEXT NOT NULL,
   stream_name TEXT NOT NULL,
   dedupe_key TEXT NOT NULL UNIQUE,
@@ -372,10 +377,10 @@ Required dedupe keys:
 ```text
 approval:{mission_patch_id}:{operator_id}:{decision}
 command:{mission_patch_id}:{action_index}:{action_type}:{target_asset_id}
-incident:{incident_key}
+incident:{scenario_run_id}:{incident_key}
 patch:{incident_id}:active
-finding:{agent}:{finding_signature}:{scenario_time_bucket}
-world_state:{version}
+finding:{scenario_run_id}:{agent}:{finding_signature}:{scenario_time_bucket}
+world_state:{scenario_run_id}:{version}
 ```
 
 Duplicate approvals must be harmless:
@@ -403,7 +408,7 @@ Database rules:
 ```sql
 ALTER TABLE incidents ADD COLUMN incident_key TEXT NOT NULL;
 CREATE UNIQUE INDEX incidents_one_active_key
-  ON incidents (incident_key)
+  ON incidents (scenario_run_id, incident_key)
   WHERE status IN ('open', 'investigating', 'pending_approval');
 
 CREATE UNIQUE INDEX mission_patches_one_active_incident
@@ -414,7 +419,7 @@ CREATE UNIQUE INDEX mission_patches_one_active_incident
 Commander rule:
 
 ```text
-Use incident_key plus SELECT FOR UPDATE or pg_advisory_xact_lock(hashtext(incident_key)).
+Use scenario_run_id plus incident_key with SELECT FOR UPDATE or pg_advisory_xact_lock(hashtext(scenario_run_id || incident_key)).
 Update an existing active incident/patch instead of creating duplicates.
 ```
 
@@ -466,6 +471,7 @@ Allowed command types for the hackathon:
 ```text
 collect_logs
 snapshot_evidence
+increase_monitoring
 run_health_check
 mark_node_suspect
 mark_checkpoint_suspect
@@ -483,6 +489,27 @@ Payload schemas:
 
 ```json
 {
+  "collect_logs": {
+    "asset_id": "node-a",
+    "log_types": ["scheduler", "gpu", "thermal"]
+  },
+  "snapshot_evidence": {
+    "asset_ids": ["node-b", "gpu-b-3"],
+    "include": ["telemetry", "agent_findings", "checkpoint_manifest"]
+  },
+  "increase_monitoring": {
+    "agent_name": "radiation_integrity_agent",
+    "asset_ids": ["node-b", "gpu-b-3"],
+    "duration_minutes": 15
+  },
+  "run_health_check": {
+    "asset_id": "node-a",
+    "check_suite": "distributed_training"
+  },
+  "mark_node_suspect": {
+    "node_id": "node-c",
+    "reason": "thermal_physical_risk"
+  },
   "mark_checkpoint_suspect": {
     "checkpoint_id": "ckpt-184900"
   },
@@ -493,6 +520,15 @@ Payload schemas:
   "cordon_node": {
     "node_id": "node-b",
     "scope": "critical_training"
+  },
+  "pause_job": {
+    "job_id": "llm-train-042",
+    "reason": "operator_approved_recovery"
+  },
+  "kill_process": {
+    "node_id": "node-a",
+    "process_id": "orphan-gpu-process-17",
+    "evidence_id": "finding-uuid"
   },
   "set_gpu_power_limit": {
     "node_id": "node-a",
@@ -870,6 +906,90 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 Use CHECK constraints for hackathon-safe enums instead of unconstrained strings. They can be migrated to real Postgres enums later.
 
+### `scenario_runs`
+
+Scenario runs make demo resets safe. Dedupe keys should include `scenario_run_id` so repeated demos can recreate the same findings and patches without unique-index conflicts from previous runs.
+
+```sql
+CREATE TABLE scenario_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('running', 'paused', 'completed', 'reset')),
+  started_at TIMESTAMPTZ DEFAULT now(),
+  ended_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX scenario_runs_status_idx ON scenario_runs (status, started_at DESC);
+```
+
+### `world_state_current`
+
+```sql
+CREATE TABLE world_state_current (
+  id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
+  version BIGINT NOT NULL DEFAULT 0,
+  state JSONB NOT NULL,
+  updated_by TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### `world_state_snapshots`
+
+```sql
+CREATE TABLE world_state_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
+  version BIGINT NOT NULL,
+  state JSONB NOT NULL,
+  reason TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (scenario_run_id, version)
+);
+
+CREATE INDEX world_state_snapshots_run_idx ON world_state_snapshots (scenario_run_id, created_at DESC);
+```
+
+### `outbox_events`
+
+```sql
+CREATE TABLE outbox_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
+  event_type TEXT NOT NULL,
+  stream_name TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  payload JSONB NOT NULL,
+  published_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX outbox_events_unpublished_idx ON outbox_events (created_at)
+  WHERE published_at IS NULL;
+```
+
+### `dead_letter_events`
+
+Redis dead-letter behavior should also be persisted for debugging.
+
+```sql
+CREATE TABLE dead_letter_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
+  source_stream TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  consumer_group TEXT NOT NULL,
+  error TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}',
+  failed_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX dead_letter_events_stream_idx ON dead_letter_events (source_stream, failed_at DESC);
+```
+
 ### `assets`
 
 ```sql
@@ -946,6 +1066,7 @@ ground_confirmed
 ```sql
 CREATE TABLE telemetry_events (
   id BIGSERIAL PRIMARY KEY,
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   event_type TEXT NOT NULL,
   asset_id TEXT,
   severity TEXT DEFAULT 'INFO',
@@ -959,6 +1080,7 @@ CREATE TABLE telemetry_events (
 ```sql
 CREATE TABLE agent_findings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   agent_name TEXT NOT NULL,
   severity TEXT NOT NULL CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
   confidence NUMERIC NOT NULL,
@@ -969,11 +1091,13 @@ CREATE TABLE agent_findings (
   recommended_actions JSONB NOT NULL DEFAULT '[]',
   status TEXT DEFAULT 'open' CHECK (status IN ('open', 'superseded', 'resolved')),
   finding_signature TEXT NOT NULL,
+  scenario_time_bucket TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX agent_findings_open_idx ON agent_findings (status, severity, created_at DESC);
-CREATE UNIQUE INDEX agent_findings_dedupe_idx ON agent_findings (agent_name, finding_signature);
+CREATE UNIQUE INDEX agent_findings_dedupe_idx
+  ON agent_findings (scenario_run_id, agent_name, finding_signature, scenario_time_bucket);
 ```
 
 ### `agent_status_events`
@@ -983,13 +1107,19 @@ Agents must emit lifecycle status even when they have no new finding. The fronte
 ```sql
 CREATE TABLE agent_status_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   agent_name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('idle', 'starting', 'monitoring', 'detecting', 'explaining', 'proposing', 'awaiting_approval', 'approved', 'executing', 'verifying', 'verified', 'healthy', 'degraded', 'blocked', 'error')),
   phase TEXT NOT NULL CHECK (phase IN ('monitor', 'detect', 'explain', 'propose', 'approve', 'execute', 'verify')),
   severity TEXT DEFAULT 'INFO' CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
   message TEXT NOT NULL,
   current_task TEXT,
   progress NUMERIC,
+  affected_assets JSONB NOT NULL DEFAULT '[]',
+  linked_finding_id UUID REFERENCES agent_findings(id),
+  linked_incident_id UUID,
+  linked_mission_patch_id UUID,
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1032,6 +1162,7 @@ verify
 ```sql
 CREATE TABLE incidents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   incident_key TEXT NOT NULL,
   title TEXT NOT NULL,
   severity TEXT NOT NULL CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
@@ -1044,7 +1175,7 @@ CREATE TABLE incidents (
 
 CREATE INDEX incidents_active_idx ON incidents (status, severity, updated_at DESC);
 CREATE UNIQUE INDEX incidents_one_active_key
-  ON incidents (incident_key)
+  ON incidents (scenario_run_id, incident_key)
   WHERE status IN ('open', 'investigating', 'pending_approval');
 ```
 
@@ -1053,6 +1184,7 @@ CREATE UNIQUE INDEX incidents_one_active_key
 ```sql
 CREATE TABLE mission_patches (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   incident_id UUID REFERENCES incidents(id),
   severity TEXT NOT NULL CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
   status TEXT NOT NULL CHECK (status IN ('draft', 'pending_approval', 'approved', 'rejected', 'executing', 'verified', 'failed', 'rolled_back')),
@@ -1090,8 +1222,9 @@ rolled_back
 ```sql
 CREATE TABLE commands (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   mission_patch_id UUID REFERENCES mission_patches(id),
-  action_type TEXT NOT NULL CHECK (action_type IN ('collect_logs', 'snapshot_evidence', 'run_health_check', 'mark_node_suspect', 'mark_checkpoint_suspect', 'rollback_training', 'cordon_node', 'pause_job', 'kill_process', 'set_gpu_power_limit', 'increase_checkpoint_frequency', 'switch_cooling_loop', 'transfer_priority')),
+  action_type TEXT NOT NULL CHECK (action_type IN ('collect_logs', 'snapshot_evidence', 'increase_monitoring', 'run_health_check', 'mark_node_suspect', 'mark_checkpoint_suspect', 'rollback_training', 'cordon_node', 'pause_job', 'kill_process', 'set_gpu_power_limit', 'increase_checkpoint_frequency', 'switch_cooling_loop', 'transfer_priority')),
   target_asset_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'skipped')),
   input JSONB NOT NULL DEFAULT '{}',
@@ -1110,6 +1243,7 @@ CREATE INDEX commands_patch_idx ON commands (mission_patch_id, status);
 ```sql
 CREATE TABLE approvals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scenario_run_id UUID REFERENCES scenario_runs(id),
   mission_patch_id UUID REFERENCES mission_patches(id),
   status TEXT NOT NULL CHECK (status IN ('approved', 'rejected')),
   operator_id TEXT,
@@ -1171,9 +1305,10 @@ Example event:
 
 ```json
 {
-  "type": "radiation_update",
+  "type": "telemetry.received",
   "timestamp": "2026-07-04T19:30:00Z",
   "asset_id": "node-b",
+  "event_type": "radiation.update",
   "payload": {
     "risk": "elevated",
     "ecc_correctable_count": 921,
@@ -1186,7 +1321,7 @@ Example agent status event:
 
 ```json
 {
-  "type": "agent_status",
+  "type": "agent.status.updated",
   "timestamp": "2026-07-04T19:30:00Z",
   "agent": "power_orbit_agent",
   "status": "awaiting_approval",
@@ -1476,9 +1611,9 @@ Recommended actions:
 
 ```text
 increase_checkpoint_frequency
-reduce_gpu_power_limit
-switch_to_backup_cooling_loop
-mark_component_for_inspection
+set_gpu_power_limit
+switch_cooling_loop
+mark_node_suspect
 ```
 
 ## 15. Radiation and Training Integrity Model
@@ -1517,16 +1652,16 @@ Integrity Agent conditions:
 
 ```text
 if ecc_errors_last_5min > 500:
-    recommend cordon_gpu_for_critical_training
+    recommend cordon_node with scope = critical_training
 
 if loss_is_nan:
-    recommend increase_verification_level
+    recommend snapshot_evidence and run_health_check
 
 if checkpoint_created_during_risk_window and ecc_errors_high:
     recommend mark_checkpoint_suspect
 
 if checkpoint_hash_mismatch:
-    recommend rollback_to_last_trusted_checkpoint
+    recommend rollback_training with checkpoint_id = last_trusted_checkpoint
 ```
 
 Key product framing:
@@ -1562,11 +1697,11 @@ Agent conditions:
 ```text
 if gpu_util > 85% and no_active_job:
     finding = "GPU usage high with no scheduled job"
-    recommend snapshot_evidence, cordon_node, kill_orphan_process_after_approval
+    recommend snapshot_evidence, cordon_node, kill_process after approval
 
 if no_step_progress_for_min > 5 and gpu_util > 80:
     finding = "training job appears stuck"
-    recommend restart_worker, run_distributed_health_check
+    recommend snapshot_evidence, run_health_check, pause_job
 ```
 
 ## 17. Checkpoint and Downlink Model
@@ -1645,8 +1780,8 @@ All agents must output this shape:
   "risk": "Latest checkpoint may contain corrupted training state.",
   "recommended_actions": [
     "mark_checkpoint_suspect",
-    "rollback_to_last_trusted_checkpoint",
-    "cordon_gpu_for_critical_training"
+    "rollback_training",
+    "cordon_node"
   ]
 }
 ```
@@ -1846,9 +1981,9 @@ This structure is cache-friendly because stable context stays at the beginning.
   "approval_required": true,
   "rollback_plan": {
     "if_verification_fails": [
-      "pause_training",
-      "preserve_forensics",
-      "resume_from_ground_confirmed_checkpoint"
+      "pause_job",
+      "snapshot_evidence",
+      "rollback_training from ground-confirmed checkpoint"
     ]
   }
 }
@@ -1889,7 +2024,7 @@ pause_job
 kill_process
 set_gpu_power_limit
 switch_cooling_loop
-transfer_checkpoint
+transfer_priority
 ```
 
 Validator output:
@@ -1898,7 +2033,7 @@ Validator output:
 {
   "allowed": false,
   "reason": "Cannot rollback to ckpt-184900 because checkpoint status is suspect.",
-  "safe_alternative": "rollback_to_ckpt-184500"
+  "safe_alternative": "Use rollback_training with checkpoint_id=ckpt-184500."
 }
 ```
 
@@ -2164,6 +2299,18 @@ GET /world-state returns seeded state.
 GET /agents/status returns seeded status for all agents.
 WS /ws/live emits a heartbeat or seeded state event.
 WS /ws/live emits agent.status.updated events.
+```
+
+Contract tests before adding workers:
+
+```text
+Command enum validation rejects unknown action types.
+Alembic migration smoke test creates runtime tables and indexes.
+GET /agents/status matches the canonical status response shape.
+Scenario reset can repeat the same finding without dedupe collision.
+Mission patch approval is idempotent for repeated approval requests.
+Approval transaction writes approval, commands, and outbox rows atomically.
+WebSocket event names use the dotted canonical names.
 ```
 
 ### Phase 2: Simulator
