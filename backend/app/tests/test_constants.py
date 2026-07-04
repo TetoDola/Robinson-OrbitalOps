@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.constants import CommandType
+from app.constants import CommandType, StreamName
 from app.config import settings
 from app.db.models import AgentStatus, AgentStatusEvent
 
@@ -32,3 +32,8 @@ def test_command_enum_contains_allowed_actions() -> None:
 def test_agent_status_projection_and_event_tables_are_distinct() -> None:
     assert AgentStatus.__tablename__ == "agent_statuses"
     assert AgentStatusEvent.__tablename__ == "agent_status_events"
+
+
+def test_stream_names_include_phase2_telemetry_stream() -> None:
+    assert StreamName.telemetry_events.value == "telemetry:events"
+    assert StreamName.ui_events.value == "ui:events"

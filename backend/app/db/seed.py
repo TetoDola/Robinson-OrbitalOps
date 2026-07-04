@@ -7,9 +7,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.constants import AGENT_SEED_STATUS, CANONICAL_WORLD_STATE
+from app.constants import AGENT_SEED_STATUS, CANONICAL_WORLD_STATE, DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID
 
-from .models import AgentStatus, AgentStatusEvent, WorldStateCurrent
+from .models import AgentStatus, AgentStatusEvent, ScenarioRun, WorldStateCurrent
+
+
+async def _upsert_scenario_run(session: AsyncSession) -> None:
+    result = await session.execute(select(ScenarioRun).where(ScenarioRun.id == DEMO_SCENARIO_RUN_ID))
+    scenario_run = result.scalar_one_or_none()
+
+    if scenario_run is None:
+        session.add(
+            ScenarioRun(
+                id=DEMO_SCENARIO_RUN_ID,
+                scenario_name=DEMO_SCENARIO_NAME,
+                status="running",
+                metadata_={"source": "seed"},
+            )
+        )
 
 
 async def _upsert_world_state(session: AsyncSession) -> None:
@@ -20,7 +35,7 @@ async def _upsert_world_state(session: AsyncSession) -> None:
         session.add(
             WorldStateCurrent(
                 id=True,
-                scenario_run_id="phase-1-run",
+                scenario_run_id=DEMO_SCENARIO_RUN_ID,
                 version=settings.world_state_seed_version,
                 state=CANONICAL_WORLD_STATE,
                 updated_by="seed",
@@ -50,7 +65,7 @@ async def _upsert_agent_statuses(session: AsyncSession) -> None:
             )
 
         event_stmt = select(AgentStatusEvent).where(
-            AgentStatusEvent.scenario_run_id == "phase-1-run",
+            AgentStatusEvent.scenario_run_id == DEMO_SCENARIO_RUN_ID,
             AgentStatusEvent.agent_name == status["agent"],
             AgentStatusEvent.status == status["status"],
             AgentStatusEvent.message == status["message"],
@@ -60,7 +75,7 @@ async def _upsert_agent_statuses(session: AsyncSession) -> None:
         if existing_event is None:
             session.add(
                 AgentStatusEvent(
-                    scenario_run_id="phase-1-run",
+                    scenario_run_id=DEMO_SCENARIO_RUN_ID,
                     agent_name=status["agent"],
                     display_name=status["display_name"],
                     status=status["status"],
@@ -74,6 +89,7 @@ async def _upsert_agent_statuses(session: AsyncSession) -> None:
 
 
 async def seed_initial_data(session: AsyncSession) -> None:
+    await _upsert_scenario_run(session)
     await _upsert_world_state(session)
     await _upsert_agent_statuses(session)
     await session.commit()

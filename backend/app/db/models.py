@@ -14,6 +14,21 @@ from sqlalchemy.sql import func
 from .base import Base
 
 
+class ScenarioRun(Base):
+    __tablename__ = "scenario_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scenario_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class WorldStateCurrent(Base):
     __tablename__ = "world_state_current"
     __table_args__ = (
@@ -107,6 +122,22 @@ class AgentStatusEvent(Base):
     linked_incident_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     linked_mission_patch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class TelemetryEvent(Base):
+    __tablename__ = "telemetry_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    scenario_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="INFO")
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

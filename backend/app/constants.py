@@ -5,6 +5,20 @@ from __future__ import annotations
 from enum import Enum
 
 
+DEMO_SCENARIO_NAME = "training-continuity-demo"
+DEMO_SCENARIO_RUN_ID = "phase-1-run"
+
+
+class StreamName(str, Enum):
+    telemetry_events = "telemetry:events"
+    agent_status = "agent:status"
+    agent_findings = "agent:findings"
+    commander_patches = "commander:patches"
+    command_requests = "command:requests"
+    command_results = "command:results"
+    ui_events = "ui:events"
+
+
 class CommandType(str, Enum):
     collect_logs = "collect_logs"
     snapshot_evidence = "snapshot_evidence"
@@ -24,31 +38,87 @@ class CommandType(str, Enum):
 
 CANONICAL_WORLD_STATE = {
     "scenario": "phase-1-demo",
+    "scenario_name": DEMO_SCENARIO_NAME,
+    "tick": 0,
     "satellite": {
-        "id": "sat-demo-01",
-        "altitude_km": 420.1,
-        "eclipse_minutes_remaining": 18,
-        "ground_track": "leo-stable",
+        "id": "orbital-dc-01",
+        "lat": 0.0,
+        "lon": -122.4,
+        "alt_km": 550,
+        "velocity_km_s": 8.05,
+        "orbit_phase": "approaching_eclipse",
+        "time_to_eclipse_min": 11,
+        "ground_link": "connected",
     },
     "power": {
-        "battery_percent": 92.0,
-        "solar_kw": 5.4,
-        "load_kw": 3.9,
-        "status": "stable",
+        "battery_percent": 38,
+        "solar_kw": 1.2,
+        "compute_budget_kw": 7.5,
+        "cooling_power_kw": 2.1,
+        "comms_power_kw": 1.0,
+        "mode": "degraded_safe",
     },
-    "thermal": {"node_a_celsius": 58.0, "node_b_celsius": 55.2, "status": "nominal"},
+    "thermal": {
+        "highest_temp_c": 86,
+        "hotspot_node": "node-c",
+        "cooling_status": "degraded",
+    },
     "radiation": {
-        "ecp_errors_5m": 42,
-        "xid_errors": 0,
-        "status": "nominal",
+        "risk": "elevated",
+        "region": "risk-zone-alpha",
+        "ecc_errors_last_5min": 921,
+        "xid_event": True,
+    },
+    "downlink": {
+        "window_open": True,
+        "capacity_gb": 22,
+        "used_gb": 0,
+        "time_remaining_min": 18,
     },
     "training": {
         "job_id": "llm-train-042",
-        "step": 12_340,
         "status": "running",
-        "checkpoint_id": "ckpt-184500",
+        "current_step": 184920,
+        "last_trusted_checkpoint": "ckpt-184500",
+        "latest_checkpoint": "ckpt-184900",
+        "latest_checkpoint_status": "suspect",
+        "loss_state": "nan_detected",
     },
-    "agents": ["workload_agent", "thermal_physical_agent", "power_orbit_agent"],
+    "nodes": [
+        {
+            "id": "node-a",
+            "status": "hot_but_usable",
+            "gpu_util": 94,
+            "temp_c": 82,
+            "power_w": 620,
+            "rank_lag": 0.08,
+        },
+        {
+            "id": "node-b",
+            "status": "integrity_risk",
+            "gpu_util": 12,
+            "temp_c": 62,
+            "ecc_errors": 921,
+            "xid_event": True,
+        },
+        {
+            "id": "node-c",
+            "status": "thermal_physical_risk",
+            "gpu_util": 5,
+            "temp_c": 88,
+            "vibration_score": 0.91,
+        },
+    ],
+    "agents": [
+        "workload_agent",
+        "thermal_physical_agent",
+        "power_orbit_agent",
+        "radiation_integrity_agent",
+        "checkpoint_downlink_agent",
+        "vibration_health_agent",
+        "commander_agent",
+    ],
+    "active_mission_patch": None,
 }
 
 
