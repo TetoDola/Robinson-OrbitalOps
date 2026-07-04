@@ -219,6 +219,270 @@ WS /ws/live
 
 Everything visual should be derivable from the canonical world state and event stream.
 
+## 4C. Runtime Guarantees
+
+These guarantees must be implemented before broad agent work starts. They prevent state drift, duplicate execution, lost stream events, and unsafe approvals.
+
+### Single World-State Writer
+
+PostgreSQL owns canonical world state. Redis Streams distribute changes. No service should keep private authoritative state.
+
+Use one table for current state and one table for history:
+
+```sql
+CREATE TABLE world_state_current (
+  id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+  version BIGINT NOT NULL DEFAULT 0,
+  state JSONB NOT NULL,
+  updated_by TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE world_state_snapshots (
+  version BIGINT PRIMARY KEY,
+  state JSONB NOT NULL,
+  reason TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Write path:
+
+```text
+simulator/executor computes a state patch
+  -> calls world_state service
+  -> world_state service opens DB transaction
+  -> SELECT world_state_current FOR UPDATE
+  -> applies patch and increments version
+  -> inserts snapshot when needed
+  -> inserts outbox row for world_state.updated
+  -> commits
+  -> outbox publisher writes to Redis/ui streams
+```
+
+Rules:
+
+```text
+Only services.world_state writes world_state_current.
+Simulator can propose telemetry patches but does not directly own state.
+Agents never mutate world state.
+Commander never mutates world state.
+Executor mutates world state only through services.world_state.
+API reads from world_state_current for GET /world-state.
+```
+
+### Transaction Boundaries and Outbox
+
+Any API call that changes mission state must use one DB transaction and an outbox row.
+
+Approval transaction:
+
+```text
+BEGIN
+  SELECT mission_patch FOR UPDATE
+  validate status = pending_approval
+  if already approved, return existing approval and commands
+  insert approval row with idempotency key
+  update mission_patch status = approved
+  create command rows for patch actions
+  insert outbox event mission_patch.approved
+  insert outbox event command.batch_created
+COMMIT
+outbox publisher writes command:requests and ui:events
+```
+
+Reject transaction:
+
+```text
+BEGIN
+  SELECT mission_patch FOR UPDATE
+  validate status = pending_approval
+  insert approval row with status = rejected
+  update mission_patch status = rejected
+  insert outbox event mission_patch.rejected
+COMMIT
+outbox publisher writes ui:events
+```
+
+Outbox table:
+
+```sql
+CREATE TABLE outbox_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_type TEXT NOT NULL,
+  stream_name TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  payload JSONB NOT NULL,
+  published_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### Idempotency
+
+All mutating endpoints accept an optional `Idempotency-Key` header.
+
+Required dedupe keys:
+
+```text
+approval:{mission_patch_id}:{operator_id}:{decision}
+command:{mission_patch_id}:{action_index}:{action_type}:{target_asset_id}
+incident:{incident_key}
+patch:{incident_id}:active
+finding:{agent}:{finding_signature}:{scenario_time_bucket}
+world_state:{version}
+```
+
+Duplicate approvals must be harmless:
+
+```text
+If patch is already approved, return 200 with existing commands.
+If patch is already rejected, return 409 for approve.
+If the same idempotency key repeats, return the original response.
+```
+
+### Incident and Patch Uniqueness
+
+Each incident needs a deterministic `incident_key`.
+
+Example:
+
+```text
+training_continuity_risk:llm-train-042:ckpt-184900
+thermal_physical_risk:node-c
+radiation_integrity_risk:node-b:gpu-b-3
+```
+
+Database rules:
+
+```sql
+ALTER TABLE incidents ADD COLUMN incident_key TEXT NOT NULL;
+CREATE UNIQUE INDEX incidents_one_active_key
+  ON incidents (incident_key)
+  WHERE status IN ('open', 'investigating', 'pending_approval');
+
+CREATE UNIQUE INDEX mission_patches_one_active_incident
+  ON mission_patches (incident_id)
+  WHERE status IN ('draft', 'pending_approval', 'approved', 'executing');
+```
+
+Commander rule:
+
+```text
+Use incident_key plus SELECT FOR UPDATE or pg_advisory_xact_lock(hashtext(incident_key)).
+Update an existing active incident/patch instead of creating duplicates.
+```
+
+### Redis Consumer Groups, ACK, Retry, and Dead Letter
+
+Every worker must consume Redis Streams through consumer groups.
+
+| Stream | Consumer group | Consumers |
+|---|---|---|
+| `telemetry:events` | `agents` | `orbitops-agents-*` |
+| `agent:status` | `api-status` | `orbitops-api-*` |
+| `agent:findings` | `commander` | `orbitops-agents-commander-*` |
+| `commander:patches` | `api-patches` | `orbitops-api-*` |
+| `command:requests` | `executor` | `orbitops-executor-*` |
+| `command:results` | `api-results` | `orbitops-api-*` |
+| `ui:events` | `websocket-broadcast` | `orbitops-api-*` |
+
+Processing contract:
+
+```text
+Read with consumer group.
+Validate payload schema.
+Check dedupe key before side effects.
+Apply DB transaction.
+ACK only after DB commit succeeds.
+If processing fails, leave pending for retry.
+If retry_count > 3, move to deadletter:events and ACK original.
+```
+
+Dead-letter event shape:
+
+```json
+{
+  "source_stream": "command:requests",
+  "source_id": "redis-message-id",
+  "consumer_group": "executor",
+  "error": "validation failed",
+  "payload": {},
+  "failed_at": "2026-07-04T19:30:00Z"
+}
+```
+
+### Command Enum and Payload Schemas
+
+Use one command enum everywhere: mission patches, safety validator, executor, commands table, API docs, and UI labels.
+
+Allowed command types for the hackathon:
+
+```text
+collect_logs
+snapshot_evidence
+run_health_check
+mark_node_suspect
+mark_checkpoint_suspect
+rollback_training
+cordon_node
+pause_job
+kill_process
+set_gpu_power_limit
+increase_checkpoint_frequency
+switch_cooling_loop
+transfer_priority
+```
+
+Payload schemas:
+
+```json
+{
+  "mark_checkpoint_suspect": {
+    "checkpoint_id": "ckpt-184900"
+  },
+  "rollback_training": {
+    "job_id": "llm-train-042",
+    "checkpoint_id": "ckpt-184500"
+  },
+  "cordon_node": {
+    "node_id": "node-b",
+    "scope": "critical_training"
+  },
+  "set_gpu_power_limit": {
+    "node_id": "node-a",
+    "power_percent": 70
+  },
+  "increase_checkpoint_frequency": {
+    "job_id": "llm-train-042",
+    "interval_minutes": 15
+  },
+  "transfer_priority": {
+    "send_first": ["checkpoint_manifest", "checkpoint_hashes", "training_logs", "delta_checkpoint"],
+    "defer": ["full_checkpoint"]
+  },
+  "switch_cooling_loop": {
+    "from_loop_id": "coolant-loop-a",
+    "to_loop_id": "coolant-loop-b"
+  }
+}
+```
+
+### Startup and Dependency Readiness
+
+Docker Compose `depends_on` is not enough by itself.
+
+Requirements:
+
+```text
+Postgres service has healthcheck.
+Redis service has healthcheck.
+Application services retry DB and Redis connections on startup.
+Phase 1 boots without CRUSOE_API_KEY.
+If CRUSOE_API_KEY is missing, Commander uses deterministic template explanations.
+```
+
 ## 4A. Agent Workflow and Cadence
 
 Decision:
@@ -324,9 +588,10 @@ Approval flow:
 2. All related agents publish status = awaiting_approval.
 3. Frontend shows Mission Patch approval panel.
 4. Operator approves, rejects, modifies, or asks Commander to replan.
-5. API writes approval record.
-6. API publishes mission_patch.approved or mission_patch.rejected.
-7. Executor starts only after approval.
+5. API runs the approval transaction described in Runtime Guarantees.
+6. Outbox publisher emits mission_patch.approved or mission_patch.rejected.
+7. Outbox publisher emits command.batch_created and command:requests for approved patches.
+8. Executor starts only after approved command rows exist.
 ```
 
 No approval means no risky command execution. Agents may still run safe autonomous actions:
@@ -470,7 +735,7 @@ docker-compose.yml
 
 ## 6. Canonical World State
 
-Maintain one canonical world state object in memory and persist important changes to Postgres.
+Maintain one canonical world state row in PostgreSQL and expose it through a world-state service. Services may cache the latest snapshot locally for reads, but all writes go through the DB transaction path described in Runtime Guarantees.
 
 The API returns this shape from `GET /world-state`:
 
@@ -550,6 +815,14 @@ The API returns this shape from `GET /world-state`:
 ## 7. Database Schema
 
 Use PostgreSQL as source of truth.
+
+Enable UUID generation:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+```
+
+Use CHECK constraints for hackathon-safe enums instead of unconstrained strings. They can be migrated to real Postgres enums later.
 
 ### `assets`
 
@@ -639,18 +912,22 @@ CREATE TABLE telemetry_events (
 
 ```sql
 CREATE TABLE agent_findings (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   agent_name TEXT NOT NULL,
-  severity TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
   confidence NUMERIC NOT NULL,
   affected_assets JSONB NOT NULL DEFAULT '[]',
   finding TEXT NOT NULL,
   evidence JSONB NOT NULL DEFAULT '[]',
   risk TEXT,
   recommended_actions JSONB NOT NULL DEFAULT '[]',
-  status TEXT DEFAULT 'open',
+  status TEXT DEFAULT 'open' CHECK (status IN ('open', 'superseded', 'resolved')),
+  finding_signature TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE INDEX agent_findings_open_idx ON agent_findings (status, severity, created_at DESC);
+CREATE UNIQUE INDEX agent_findings_dedupe_idx ON agent_findings (agent_name, finding_signature);
 ```
 
 ### `agent_status_events`
@@ -659,17 +936,19 @@ Agents must emit lifecycle status even when they have no new finding. The fronte
 
 ```sql
 CREATE TABLE agent_status_events (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   agent_name TEXT NOT NULL,
-  status TEXT NOT NULL,
-  phase TEXT NOT NULL,
-  severity TEXT DEFAULT 'INFO',
+  status TEXT NOT NULL CHECK (status IN ('idle', 'starting', 'monitoring', 'detecting', 'explaining', 'proposing', 'awaiting_approval', 'approved', 'executing', 'verifying', 'verified', 'healthy', 'degraded', 'blocked', 'error')),
+  phase TEXT NOT NULL CHECK (phase IN ('monitor', 'detect', 'explain', 'propose', 'approve', 'execute', 'verify')),
+  severity TEXT DEFAULT 'INFO' CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
   message TEXT NOT NULL,
   current_task TEXT,
   progress NUMERIC,
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE INDEX agent_status_latest_idx ON agent_status_events (agent_name, created_at DESC);
 ```
 
 Recommended statuses:
@@ -706,25 +985,31 @@ verify
 
 ```sql
 CREATE TABLE incidents (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  incident_key TEXT NOT NULL,
   title TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  status TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
+  status TEXT NOT NULL CHECK (status IN ('open', 'investigating', 'pending_approval', 'approved', 'executing', 'verified', 'resolved', 'rejected', 'failed')),
   finding_ids JSONB NOT NULL DEFAULT '[]',
   summary TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE INDEX incidents_active_idx ON incidents (status, severity, updated_at DESC);
+CREATE UNIQUE INDEX incidents_one_active_key
+  ON incidents (incident_key)
+  WHERE status IN ('open', 'investigating', 'pending_approval');
 ```
 
 ### `mission_patches`
 
 ```sql
 CREATE TABLE mission_patches (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   incident_id UUID REFERENCES incidents(id),
-  severity TEXT NOT NULL,
-  status TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('INFO', 'YELLOW', 'ORANGE', 'RED')),
+  status TEXT NOT NULL CHECK (status IN ('draft', 'pending_approval', 'approved', 'rejected', 'executing', 'verified', 'failed', 'rolled_back')),
   summary TEXT NOT NULL,
   evidence JSONB NOT NULL DEFAULT '[]',
   actions JSONB NOT NULL DEFAULT '[]',
@@ -734,6 +1019,11 @@ CREATE TABLE mission_patches (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE INDEX mission_patches_status_idx ON mission_patches (status, updated_at DESC);
+CREATE UNIQUE INDEX mission_patches_one_active_incident
+  ON mission_patches (incident_id)
+  WHERE status IN ('draft', 'pending_approval', 'approved', 'executing');
 ```
 
 Mission patch statuses:
@@ -753,30 +1043,37 @@ rolled_back
 
 ```sql
 CREATE TABLE commands (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   mission_patch_id UUID REFERENCES mission_patches(id),
-  action_type TEXT NOT NULL,
+  action_type TEXT NOT NULL CHECK (action_type IN ('collect_logs', 'snapshot_evidence', 'run_health_check', 'mark_node_suspect', 'mark_checkpoint_suspect', 'rollback_training', 'cordon_node', 'pause_job', 'kill_process', 'set_gpu_power_limit', 'increase_checkpoint_frequency', 'switch_cooling_loop', 'transfer_priority')),
   target_asset_id TEXT,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'skipped')),
   input JSONB NOT NULL DEFAULT '{}',
   result JSONB NOT NULL DEFAULT '{}',
+  idempotency_key TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE INDEX commands_queue_idx ON commands (status, created_at);
+CREATE INDEX commands_patch_idx ON commands (mission_patch_id, status);
 ```
 
 ### `approvals`
 
 ```sql
 CREATE TABLE approvals (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   mission_patch_id UUID REFERENCES mission_patches(id),
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('approved', 'rejected')),
   operator_id TEXT,
   operator_note TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ DEFAULT now(),
   decided_at TIMESTAMPTZ
 );
+
+CREATE INDEX approvals_patch_idx ON approvals (mission_patch_id, created_at DESC);
 ```
 
 ## 8. Redis Streams
@@ -792,6 +1089,25 @@ command:requests
 command:results
 ui:events
 ```
+
+Naming convention:
+
+```text
+Redis streams use colon names: agent:status.
+WebSocket event types use dotted names: agent.status.updated.
+Database tables use snake_case names: agent_status_events.
+```
+
+Canonical mapping:
+
+| Meaning | Redis stream | WebSocket event type | Database table |
+|---|---|---|---|
+| Agent lifecycle status | `agent:status` | `agent.status.updated` | `agent_status_events` |
+| Agent finding | `agent:findings` | `agent.finding.created` | `agent_findings` |
+| Mission patch | `commander:patches` | `mission_patch.created` | `mission_patches` |
+| Command request | `command:requests` | `command.started` | `commands` |
+| Command result | `command:results` | `command.succeeded` / `command.failed` | `commands` |
+| UI broadcast | `ui:events` | source event type | outbox/UI only |
 
 Flow:
 
@@ -1544,6 +1860,8 @@ Validator output:
 
 The executor listens only after approval.
 
+The executor only accepts command types from the enum in Runtime Guarantees. Do not introduce alternate names in individual agents or mission patches.
+
 ### `set_gpu_power_limit`
 
 Effects:
@@ -1653,6 +1971,8 @@ GET /mission-patches/active
 GET /mission-patches/{id}
 POST /mission-patches/{id}/approve
 POST /mission-patches/{id}/reject
+POST /mission-patches/{id}/request-replan
+PATCH /mission-patches/{id}/actions
 
 GET /commands
 GET /commands/{id}
@@ -1804,14 +2124,38 @@ world state changes over time.
 satellite position and eclipse countdown update.
 ```
 
-### Phase 3: Mock agents
+### Phase 3: First vertical agent slice
 
-Build independent workers:
+Build one complete path before adding the remaining agents:
+
+```text
+simulator event
+-> Power / Orbit Agent
+-> finding
+-> Commander patch
+-> approval
+-> executor
+-> verification
+-> WebSocket UI event
+```
+
+Acceptance criteria:
+
+```text
+Power / Orbit Agent emits status transitions and one finding.
+Commander creates one pending mission patch.
+Approval endpoint transitions patch atomically.
+Executor processes command requests once.
+Verification completes and updates world state.
+```
+
+### Phase 4: Remaining mock agents
+
+Then add independent workers:
 
 ```text
 workload agent
 thermal / physical agent
-power / orbit agent
 radiation / integrity agent
 checkpoint / downlink agent
 vibration health agent
@@ -1828,7 +2172,7 @@ UI receives agent.finding.created events.
 UI receives agent.status.updated events.
 ```
 
-### Phase 4: Commander
+### Phase 5: Commander hardening
 
 Build:
 
@@ -1847,7 +2191,7 @@ Commander creates patch-042 in pending_approval state.
 Safety validator runs before patch becomes approvable.
 ```
 
-### Phase 5: Approval flow
+### Phase 6: Approval flow
 
 Build:
 
@@ -1866,7 +2210,7 @@ Approved patch emits mission_patch.approved.
 Rejected patch emits mission_patch.rejected or equivalent UI event.
 ```
 
-### Phase 6: Executor
+### Phase 7: Executor
 
 Build:
 
@@ -1886,7 +2230,7 @@ Executor emits command.started, command.succeeded, and verification.completed.
 Active patch reaches verified state.
 ```
 
-### Phase 7: Polish
+### Phase 8: Polish
 
 Build:
 
@@ -1918,12 +2262,15 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
-      CRUSOE_API_KEY: ${CRUSOE_API_KEY}
+      CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
       CRUSOE_MODEL: deepseek-ai/Deepseek-V4-Flash
+      CRUSOE_ENABLED: ${CRUSOE_ENABLED:-false}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   orbitops-simulator:
     build: ./backend
@@ -1932,8 +2279,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   orbitops-agents:
     build: ./backend
@@ -1941,12 +2290,15 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
-      CRUSOE_API_KEY: ${CRUSOE_API_KEY}
+      CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
       CRUSOE_MODEL: deepseek-ai/Deepseek-V4-Flash
+      CRUSOE_ENABLED: ${CRUSOE_ENABLED:-false}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   orbitops-executor:
     build: ./backend
@@ -1955,8 +2307,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   postgres:
     image: postgres:16
@@ -1968,11 +2322,21 @@ services:
       - "5432:5432"
     volumes:
       - orbitops_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orbitops -d orbitops"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
 volumes:
   orbitops_pg:
