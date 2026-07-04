@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.verification/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.env
