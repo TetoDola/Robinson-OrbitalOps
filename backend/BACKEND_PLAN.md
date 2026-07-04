@@ -44,6 +44,7 @@ PostgreSQL
 Redis Streams
 Python async workers
 Crusoe Managed Inference
+Smithers optional workflow supervision
 Docker Compose
 MinIO optional
 ```
@@ -57,6 +58,7 @@ Rationale:
 - Python async workers keep implementation simple while still separating responsibilities.
 - Docker Compose runs the whole backend stack with one command.
 - Crusoe Managed Inference is used by the Commander Agent for explanation and JSON polish, not for deterministic safety decisions.
+- Smithers can help scaffold, run, watch, and approve agent workflows during development and demos, but it should not become the source of truth for mission state.
 - MinIO is optional for mock thermal images, vibration files, logs, and checkpoint manifests.
 
 Crusoe integration should follow the local root reference file:
@@ -79,6 +81,21 @@ deepseek-ai/Deepseek-V4-Flash
 ```
 
 Use an exact model string from `../CRUSOE.md`. Do not guess model names.
+
+Smithers note:
+
+```text
+Use Smithers for agent workflow orchestration and supervision.
+Use Redis + Postgres for runtime state and frontend status.
+Do not make the UI depend directly on Smithers internals.
+```
+
+Do not confuse:
+
+```text
+Smithers = optional workflow orchestration and supervision runtime.
+Smithery = MCP server registry / agent tool marketplace.
+```
 
 ## 3. Runtime Services
 
@@ -120,6 +137,27 @@ Responsibilities:
   - Commander Agent.
 - Consumes telemetry and world state.
 - Produces findings and mission patches.
+- Emits agent status updates for the UI:
+  - monitoring
+  - detecting
+  - explaining
+  - proposing
+  - awaiting_approval
+  - idle
+  - blocked
+  - error
+
+### `orbitops-workflow-supervisor` optional
+
+Responsibilities:
+
+- Optional Smithers-driven workflow runner for demos and development.
+- Starts scripted agent workflow runs.
+- Watches agent steps.
+- Mirrors Smithers run status into `agent:status` and `ui:events`.
+- Never bypasses API approval or safety validation.
+
+Use this only if it helps demo reliability. The core backend must still work without it.
 
 ### `orbitops-executor`
 
@@ -181,6 +219,180 @@ WS /ws/live
 
 Everything visual should be derivable from the canonical world state and event stream.
 
+## 4A. Agent Workflow and Cadence
+
+Decision:
+
+```text
+Simulator ingests and publishes telemetry every 1 second.
+Fast numeric agents evaluate every 2 seconds.
+Heavier evidence agents evaluate every 5 seconds.
+Commander evaluates every 10 seconds or immediately after RED findings.
+Mission Patch creation is debounced so one incident produces one patch, not a flood.
+Frontend receives status/events in real time over WebSocket.
+```
+
+Keep these roles separate:
+
+```text
+Simulator = generates world telemetry.
+Agents = independently inspect telemetry and produce findings/status.
+Commander = fuses findings into incidents and mission patches.
+Safety validator = deterministic gate before approval.
+API = human approval interface and frontend stream.
+Executor = mutates mock state after approval.
+Smithers = optional workflow supervisor, not source of truth.
+```
+
+### Data Ingestion Cadence
+
+Use this cadence for the hackathon:
+
+| Producer | Cadence | Output | Notes |
+|---|---:|---|---|
+| Simulator tick | 1s | `telemetry:events`, world state patch | Updates orbit, power, thermal, radiation, downlink, training, nodes. |
+| API world-state snapshot | 1s or on change | `world_state.updated` | WebSocket sends compact state diffs or full state for simplicity. |
+| Workload Agent | 2s | `agent:status`, `agent:findings` | Detects stuck ranks, orphan GPU load, scheduler mismatch. |
+| Thermal / Physical Agent | 2s | `agent:status`, `agent:findings` | Watches temp, hotspot, cooling state. |
+| Power / Orbit Agent | 2s | `agent:status`, `agent:findings` | Watches eclipse, battery, solar, power budget. |
+| Radiation / Integrity Agent | 2s | `agent:status`, `agent:findings` | Watches ECC, Xid, NaN loss, checkpoint trust. |
+| Checkpoint / Downlink Agent | 5s | `agent:status`, `agent:findings` | Watches checkpoint size, transfer window, hashes, manifests. |
+| Vibration Health Agent | 5s | `agent:status`, `agent:findings` | Watches structure-borne vibration anomaly score. |
+| Commander Agent | 10s or immediate on RED | `commander:patches`, `ui:events` | Groups active findings, creates one pending patch. |
+| Executor | on approval | `command:results`, `ui:events` | Runs mock commands and emits verification. |
+
+For the demo, this is fast enough to feel live without flooding the UI.
+
+### Agent Loop
+
+Each agent runs the same loop:
+
+```text
+1. Publish agent.status.updated = monitoring.
+2. Read latest world state snapshot.
+3. Read recent telemetry events for owned domains.
+4. Compute domain risk score.
+5. Publish agent.status.updated = detecting.
+6. If no issue, publish healthy/monitoring status and stop.
+7. If issue exists, build finding with evidence.
+8. Publish agent.finding.created.
+9. Publish agent.status.updated = proposing.
+10. Wait for Commander/approval/executor lifecycle updates.
+```
+
+Agent workers should not call each other directly. They communicate through state, streams, and findings.
+
+### Commander Loop
+
+The Commander runs when:
+
+```text
+any RED finding is created
+two or more ORANGE findings are open
+checkpoint trust changes to suspect
+time_to_eclipse_min < 15 and battery_percent < 45
+every 10 seconds while an incident is active
+```
+
+Commander behavior:
+
+```text
+1. Publish commander status = monitoring.
+2. Collect open findings from the last 2 minutes.
+3. Group findings by incident type and affected assets.
+4. If a pending mission patch already exists for the incident, update it only if severity increased.
+5. Run deterministic action selection.
+6. Run safety validator.
+7. Optionally call Crusoe for explanation/JSON polish.
+8. Persist incident and mission patch.
+9. Publish mission_patch.created.
+10. Publish commander status = awaiting_approval.
+```
+
+Patch debounce:
+
+```text
+Do not create a new patch more than once every 30 seconds for the same incident unless severity escalates to RED.
+```
+
+### Human Approval Loop
+
+Approval flow:
+
+```text
+1. Mission patch status = pending_approval.
+2. All related agents publish status = awaiting_approval.
+3. Frontend shows Mission Patch approval panel.
+4. Operator approves, rejects, modifies, or asks Commander to replan.
+5. API writes approval record.
+6. API publishes mission_patch.approved or mission_patch.rejected.
+7. Executor starts only after approval.
+```
+
+No approval means no risky command execution. Agents may still run safe autonomous actions:
+
+```text
+collect_logs
+snapshot_evidence
+increase_monitoring
+run_health_check
+mark_node_suspect
+```
+
+### Executor and Verification Loop
+
+Executor flow:
+
+```text
+1. Consume approved mission patch from command:requests.
+2. Create command rows for each action.
+3. Publish command.started.
+4. Apply mock world-state effect.
+5. Publish command.succeeded or command.failed.
+6. Run verification checks.
+7. If all checks pass, patch status = verified.
+8. Publish verification.completed.
+9. Agents return to monitoring with updated state.
+```
+
+## 4B. Smithers Role
+
+Smithers is useful for workflow supervision, not mission state.
+
+Use Smithers to:
+
+```text
+Run the scripted multi-agent workflow.
+Show workflow progress during development.
+Handle retries and resumable steps.
+Gate a demo workflow at human approval.
+Call backend APIs in a controlled sequence.
+Mirror workflow status into OrbitOps streams.
+```
+
+Do not use Smithers to:
+
+```text
+Store canonical world state.
+Bypass the OrbitOps API.
+Bypass the safety validator.
+Let the LLM directly execute commands.
+Send UI data that does not also exist in Redis/Postgres.
+```
+
+Smithers integration should look like:
+
+```text
+Smithers workflow step starts
+  -> smithers_adapter publishes agent.status.updated
+  -> agent or backend service executes domain logic
+  -> result is persisted in Postgres
+  -> result is published to Redis
+  -> API WebSocket streams it to frontend
+```
+
+If Smithers is unavailable, `orbitops-agents` should still run the same workflow using plain Python async loops.
+
 ## 5. Folder Structure
 
 Use this backend structure:
@@ -196,6 +408,7 @@ backend/
       routes_world_state.py
       routes_satellite.py
       routes_agents.py
+      routes_agent_status.py
       routes_incidents.py
       routes_mission_patches.py
       routes_commands.py
@@ -217,6 +430,7 @@ backend/
 
     services/
       world_state.py
+      agent_status.py
       orbit_calculator.py
       power_model.py
       radiation_model.py
@@ -225,6 +439,10 @@ backend/
       mission_patch_builder.py
       command_executor.py
       llm_client.py
+
+    workflows/
+      smithers_adapter.py
+      demo_workflows.py
 
     agents/
       base.py
@@ -435,6 +653,55 @@ CREATE TABLE agent_findings (
 );
 ```
 
+### `agent_status_events`
+
+Agents must emit lifecycle status even when they have no new finding. The frontend uses these events to show that agents are actively monitoring, detecting, awaiting approval, or blocked.
+
+```sql
+CREATE TABLE agent_status_events (
+  id UUID PRIMARY KEY,
+  agent_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  severity TEXT DEFAULT 'INFO',
+  message TEXT NOT NULL,
+  current_task TEXT,
+  progress NUMERIC,
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Recommended statuses:
+
+```text
+idle
+starting
+monitoring
+detecting
+explaining
+proposing
+awaiting_approval
+executing
+verifying
+healthy
+degraded
+blocked
+error
+```
+
+Recommended phases:
+
+```text
+monitor
+detect
+explain
+propose
+approve
+execute
+verify
+```
+
 ### `incidents`
 
 ```sql
@@ -518,6 +785,7 @@ Use these streams:
 
 ```text
 telemetry:events
+agent:status
 agent:findings
 commander:patches
 command:requests
@@ -529,6 +797,7 @@ Flow:
 
 ```text
 simulator -> telemetry:events
+agents -> agent:status
 agents -> agent:findings
 commander -> commander:patches
 api approval -> command:requests
@@ -547,6 +816,26 @@ Example event:
     "risk": "elevated",
     "ecc_correctable_count": 921,
     "xid_event": true
+  }
+}
+```
+
+Example agent status event:
+
+```json
+{
+  "type": "agent_status",
+  "timestamp": "2026-07-04T19:30:00Z",
+  "agent": "power_orbit_agent",
+  "status": "awaiting_approval",
+  "phase": "approve",
+  "severity": "ORANGE",
+  "message": "Mission Patch patch-042 is waiting for operator approval.",
+  "current_task": "checkpoint before eclipse",
+  "progress": 0.82,
+  "metadata": {
+    "mission_patch_id": "patch-042",
+    "time_to_eclipse_min": 11
   }
 }
 ```
@@ -1002,6 +1291,101 @@ All agents must output this shape:
 
 This interface lets later teams replace mock agents with real agents without changing the backend.
 
+## 18A. Agent Status Schema
+
+Findings are not enough for the frontend. Every agent must also emit status updates so the UI can show live cards like:
+
+```text
+monitoring
+detecting
+awaiting approval
+executing
+verified
+blocked
+```
+
+Status event schema:
+
+```json
+{
+  "type": "agent.status.updated",
+  "timestamp": "2026-07-04T19:30:00Z",
+  "agent": "thermal_physical_agent",
+  "display_name": "Thermal / Physical Agent",
+  "phase": "detect",
+  "status": "detecting",
+  "severity": "RED",
+  "message": "Node C hotspot confirmed by IR and rack telemetry.",
+  "current_task": "thermal anomaly scoring",
+  "progress": 0.74,
+  "affected_assets": ["node-c", "thermal-cam-1"],
+  "linked_finding_id": "optional-uuid",
+  "linked_incident_id": "optional-uuid",
+  "linked_mission_patch_id": "optional-uuid",
+  "metadata": {
+    "hotspot_temp_c": 88,
+    "cooling_status": "degraded"
+  }
+}
+```
+
+Allowed `phase` values:
+
+```text
+monitor
+detect
+explain
+propose
+approve
+execute
+verify
+```
+
+Allowed `status` values:
+
+```text
+idle
+starting
+monitoring
+detecting
+explaining
+proposing
+awaiting_approval
+approved
+executing
+verifying
+verified
+healthy
+degraded
+blocked
+error
+```
+
+Frontend mapping:
+
+| Status | UI label | UI meaning |
+|---|---|---|
+| `monitoring` | Monitoring | Agent is watching live telemetry. |
+| `detecting` | Detecting | Agent is evaluating a possible anomaly. |
+| `explaining` | Explaining | Agent is gathering evidence and building rationale. |
+| `proposing` | Proposing | Agent has recommended actions for Commander. |
+| `awaiting_approval` | Awaiting approval | Agent is blocked until operator approves the Mission Patch. |
+| `executing` | Executing | Approved commands are running. |
+| `verifying` | Verifying | Recovery checks are running. |
+| `verified` | Verified | Recovery passed for this agent domain. |
+| `blocked` | Blocked | Agent cannot proceed without operator or state change. |
+| `error` | Error | Agent failed or produced invalid output. |
+
+Status throttling:
+
+```text
+Emit immediately when status changes.
+Emit heartbeat every 10 seconds while status is unchanged.
+Do not emit more than 1 status update per agent per second.
+```
+
+The WebSocket should stream the latest status immediately on client connect, then stream incremental updates.
+
 ## 19. Commander Agent
 
 The Commander consumes active findings and produces one mission patch.
@@ -1258,6 +1642,7 @@ GET /satellite/position
 GET /satellite/orbit
 
 GET /agents
+GET /agents/status
 GET /agents/findings
 
 GET /incidents
@@ -1285,14 +1670,45 @@ WebSocket event types:
 ```text
 world_state.updated
 telemetry.received
+agent.status.updated
 agent.finding.created
 incident.created
 mission_patch.created
+mission_patch.awaiting_approval
 mission_patch.approved
+mission_patch.rejected
 command.started
 command.succeeded
 command.failed
 verification.completed
+```
+
+`GET /agents/status` should return the latest status per agent:
+
+```json
+{
+  "agents": [
+    {
+      "agent": "workload_agent",
+      "display_name": "Workload Agent",
+      "status": "monitoring",
+      "phase": "monitor",
+      "severity": "INFO",
+      "message": "Scheduler and GPU utilization are aligned.",
+      "updated_at": "2026-07-04T19:30:00Z"
+    },
+    {
+      "agent": "radiation_integrity_agent",
+      "display_name": "Radiation / Integrity Agent",
+      "status": "awaiting_approval",
+      "phase": "approve",
+      "severity": "RED",
+      "message": "ckpt-184900 is suspect. Awaiting approval for rollback to ckpt-184500.",
+      "linked_mission_patch_id": "patch-042",
+      "updated_at": "2026-07-04T19:30:00Z"
+    }
+  ]
+}
 ```
 
 ## 24. Main Demo Scenario
@@ -1352,6 +1768,7 @@ Redis connection
 Docker Compose
 health endpoint
 world-state endpoint
+agent status endpoint
 WebSocket endpoint
 ```
 
@@ -1361,7 +1778,9 @@ Acceptance criteria:
 docker compose up starts API, Postgres, and Redis.
 GET /health returns ok.
 GET /world-state returns seeded state.
+GET /agents/status returns seeded status for all agents.
 WS /ws/live emits a heartbeat or seeded state event.
+WS /ws/live emits agent.status.updated events.
 ```
 
 ### Phase 2: Simulator
@@ -1402,8 +1821,11 @@ Acceptance criteria:
 
 ```text
 Each agent emits the shared finding schema.
+Each agent emits status transitions and 10-second heartbeats.
 Findings appear in Postgres and agent:findings.
+Statuses appear in Postgres and agent:status.
 UI receives agent.finding.created events.
+UI receives agent.status.updated events.
 ```
 
 ### Phase 4: Commander
