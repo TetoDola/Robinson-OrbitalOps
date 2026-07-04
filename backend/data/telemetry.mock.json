@@ -1,0 +1,177 @@
+{
+  "contractVersion": "orbitalops.telemetry.v1",
+  "generatedAt": "2026-07-04T10:15:00Z",
+  "source": {
+    "mode": "mock",
+    "provider": "local-demo",
+    "latencyMs": 42
+  },
+  "updatePolicy": {
+    "transport": "polling",
+    "intervalMs": 1000
+  },
+  "mission": {
+    "id": "orbitalops-demo",
+    "name": "AKJA Orbital Datacenter Command",
+    "state": "human_approval_required",
+    "simulationRate": 1,
+    "activeSatelliteId": "AKJA-01"
+  },
+  "groundStations": [
+    {
+      "id": "zurich-03",
+      "name": "Zurich-03",
+      "latDeg": 47.3769,
+      "lonDeg": 8.5417,
+      "status": "nominal"
+    },
+    {
+      "id": "singapore-02",
+      "name": "Singapore-02",
+      "latDeg": 1.3521,
+      "lonDeg": 103.8198,
+      "status": "nominal"
+    },
+    {
+      "id": "mojave-01",
+      "name": "Mojave-01",
+      "latDeg": 35.0117,
+      "lonDeg": -115.4734,
+      "status": "nominal"
+    },
+    {
+      "id": "santiago-04",
+      "name": "Santiago-04",
+      "latDeg": -33.4489,
+      "lonDeg": -70.6693,
+      "status": "nominal"
+    }
+  ],
+  "satellites": [
+    {
+      "id": "AKJA-01",
+      "name": "AKJA Orbital Datacenter 01",
+      "status": "degraded",
+      "severity": "red",
+      "orbit": {
+        "model": "tle",
+        "tle": {
+          "line1": "1 00000U 26001A   26185.42708333  .00000000  00000+0  00000+0 0  9991",
+          "line2": "2 00000  51.6000 120.0000 0005000  45.0000 315.0000 15.50000000    01"
+        },
+        "position": {
+          "latDeg": 48.85,
+          "lonDeg": 2.35,
+          "altitudeKm": 420
+        },
+        "velocityKms": 7.67,
+        "phase": "approaching_eclipse",
+        "timeToEclipseSec": 660
+      },
+      "telemetry": {
+        "computeLoadPct": 78,
+        "agentLatencyMs": 38,
+        "batteryPct": 38,
+        "solarInputKw": 1.2,
+        "radiationRisk": "elevated",
+        "thermalC": 20.8,
+        "eccTrend": "rising"
+      },
+      "downlink": {
+        "activeStationId": "zurich-03",
+        "windowAvailableGb": 22,
+        "windowRequiredGb": 180,
+        "signalPct": 86
+      },
+      "checkpoints": {
+        "lastTrustedId": "ckpt-184500",
+        "latestId": "ckpt-184900",
+        "latestStatus": "suspect"
+      },
+      "nodes": [
+        {
+          "id": "node-a",
+          "label": "Node A",
+          "status": "degraded",
+          "summary": "Critical training, reduced-power safe mode",
+          "gpuCount": 8,
+          "powerLimitPct": 70
+        },
+        {
+          "id": "node-b",
+          "label": "Node B",
+          "status": "unsafe",
+          "summary": "Free GPUs, ECC rising on GPU 3",
+          "gpuCount": 8,
+          "flaggedGpuIds": ["gpu-3"]
+        },
+        {
+          "id": "node-c",
+          "label": "Node C",
+          "status": "unsafe",
+          "summary": "IR hotspot confirmed while idle",
+          "gpuCount": 8
+        },
+        {
+          "id": "node-d",
+          "label": "Node D",
+          "status": "nominal",
+          "summary": "Standby pool available for canary eval",
+          "gpuCount": 8
+        }
+      ],
+      "agents": [
+        {
+          "id": "workload-agent",
+          "name": "Workload Agent",
+          "severity": "orange",
+          "message": "Rank 17 all-reduce timeout, orphan worker suspected"
+        },
+        {
+          "id": "thermal-agent",
+          "name": "Thermal Agent",
+          "severity": "red",
+          "message": "Node C hotspot confirmed by IR and rack telemetry"
+        },
+        {
+          "id": "power-orbit-agent",
+          "name": "Power / Orbit Agent",
+          "severity": "orange",
+          "message": "Eclipse in 11 min, battery reserve below target"
+        },
+        {
+          "id": "integrity-agent",
+          "name": "Integrity Agent",
+          "severity": "red",
+          "message": "ckpt-184900 suspect after ECC spike and NaN loss"
+        },
+        {
+          "id": "downlink-agent",
+          "name": "Downlink Agent",
+          "severity": "yellow",
+          "message": "22 GB window cannot carry 180 GB full checkpoint"
+        }
+      ]
+    }
+  ],
+  "incidents": [],
+  "missionPatch": {
+    "id": "patch-042",
+    "title": "protect training integrity",
+    "status": "awaiting_approval",
+    "mode": "human_approval",
+    "severity": "red",
+    "confidencePct": 87,
+    "windowSec": 660,
+    "summary": "ECC escalation, Node C thermal anomaly, power drop, and limited downlink make the latest checkpoint unsafe for automatic continuation.",
+    "actions": [
+      "Mark ckpt-184900 as suspect and preserve evidence.",
+      "Roll back critical training to ckpt-184500.",
+      "Cordon Node B GPU 3 from critical training.",
+      "Mark Node C unavailable until thermal verification passes.",
+      "Reduce Node A GPU power limit to 70% before eclipse.",
+      "Send manifest, hashes, logs, and delta checkpoint first.",
+      "Run canary eval and distributed health check before resume."
+    ]
+  }
+}

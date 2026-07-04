@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/orbitalops.telemetry.v1.schema.json",
+  "title": "OrbitalOps Telemetry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "generatedAt", "source", "updatePolicy", "mission", "groundStations", "satellites", "incidents", "missionPatch"],
+  "properties": {
+    "contractVersion": { "const": "orbitalops.telemetry.v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "provider"],
+      "properties": {
+        "mode": { "enum": ["mock", "live", "replay", "fallback"] },
+        "provider": { "type": "string", "minLength": 1 },
+        "latencyMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "updatePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "intervalMs"],
+      "properties": {
+        "transport": { "enum": ["polling"] },
+        "intervalMs": { "const": 1000 }
+      }
+    },
+    "mission": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "name", "state", "activeSatelliteId"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "state": { "type": "string" },
+        "simulationRate": { "type": "number", "minimum": 0 },
+        "activeSatelliteId": { "type": "string" }
+      }
+    },
+    "groundStations": { "type": "array", "items": { "$ref": "#/$defs/groundStation" } },
+    "satellites": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "$ref": "#/$defs/satellite" } },
+    "incidents": { "type": "array", "items": { "$ref": "#/$defs/incident" } },
+    "missionPatch": { "$ref": "#/$defs/missionPatch" }
+  },
+  "$defs": {
+    "status": { "enum": ["nominal", "degraded", "unsafe", "unavailable", "unknown"] },
+    "severity": { "enum": ["green", "yellow", "orange", "red"] },
+    "groundStation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "latDeg", "lonDeg", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "latDeg": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lonDeg": { "type": "number", "minimum": -180, "maximum": 180 },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "satellite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "status", "severity", "orbit", "telemetry", "downlink", "checkpoints", "nodes", "agents"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "orbit": { "$ref": "#/$defs/orbit" },
+        "telemetry": { "$ref": "#/$defs/telemetry" },
+        "downlink": { "$ref": "#/$defs/downlink" },
+        "checkpoints": { "$ref": "#/$defs/checkpoints" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "agents": { "type": "array", "items": { "$ref": "#/$defs/agentFinding" } }
+      }
+    },
+    "orbit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "position", "velocityKms", "phase"],
+      "properties": {
+        "model": { "enum": ["tle", "state_vector", "position_snapshot"] },
+        "tle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["line1", "line2"],
+          "properties": {
+            "line1": { "type": "string" },
+            "line2": { "type": "string" }
+          }
+        },
+        "position": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["latDeg", "lonDeg", "altitudeKm"],
+          "properties": {
+            "latDeg": { "type": "number", "minimum": -90, "maximum": 90 },
+            "lonDeg": { "type": "number", "minimum": -180, "maximum": 180 },
+            "altitudeKm": { "type": "number", "minimum": 0 }
+          }
+        },
+        "velocityKms": { "type": "number", "minimum": 0 },
+        "phase": { "enum": ["sunlit", "approaching_eclipse", "eclipse", "exiting_eclipse", "unknown"] },
+        "timeToEclipseSec": { "type": "number", "minimum": 0 }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["computeLoadPct", "agentLatencyMs", "batteryPct", "solarInputKw", "radiationRisk", "thermalC", "eccTrend"],
+      "properties": {
+        "computeLoadPct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "agentLatencyMs": { "type": "number", "minimum": 0 },
+        "batteryPct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "solarInputKw": { "type": "number", "minimum": 0 },
+        "radiationRisk": { "enum": ["low", "elevated", "high", "unknown"] },
+        "thermalC": { "type": "number" },
+        "eccTrend": { "enum": ["stable", "rising", "critical", "unknown"] }
+      }
+    },
+    "downlink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activeStationId", "windowAvailableGb", "windowRequiredGb"],
+      "properties": {
+        "activeStationId": { "type": "string" },
+        "windowAvailableGb": { "type": "number", "minimum": 0 },
+        "windowRequiredGb": { "type": "number", "minimum": 0 },
+        "signalPct": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "checkpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lastTrustedId", "latestId", "latestStatus"],
+      "properties": {
+        "lastTrustedId": { "type": "string" },
+        "latestId": { "type": "string" },
+        "latestStatus": { "enum": ["trusted", "suspect", "failed", "unknown"] }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "label", "status", "summary"],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "summary": { "type": "string" },
+        "gpuCount": { "type": "integer", "minimum": 0 },
+        "powerLimitPct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "flaggedGpuIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "agentFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "severity", "message"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "message": { "type": "string" }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "timeOffsetSec", "agentId", "severity", "message"],
+      "properties": {
+        "id": { "type": "string" },
+        "timeOffsetSec": { "type": "number", "minimum": 0 },
+        "agentId": { "type": "string" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "message": { "type": "string" }
+      }
+    },
+    "missionPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "status", "mode", "severity", "confidencePct", "windowSec", "summary", "actions"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "status": { "enum": ["awaiting_approval", "approved", "executing", "verified", "rejected", "replan_requested", "modifying"] },
+        "mode": { "enum": ["human_approval", "automatic", "monitor_only"] },
+        "severity": { "$ref": "#/$defs/severity" },
+        "confidencePct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "windowSec": { "type": "number", "minimum": 0 },
+        "summary": { "type": "string" },
+        "actions": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
