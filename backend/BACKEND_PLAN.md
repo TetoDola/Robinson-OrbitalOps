@@ -41,6 +41,8 @@ Use this stack for the hackathon backend:
 ```text
 FastAPI
 PostgreSQL
+SQLAlchemy 2 async ORM
+Alembic migrations
 Redis Streams
 Python async workers
 Crusoe Managed Inference
@@ -54,6 +56,8 @@ Rationale:
 - FastAPI provides REST endpoints and WebSockets for live UI updates.
 - PostgreSQL is the source of truth.
 - PostgreSQL `jsonb` handles flexible telemetry, findings, and patch payloads.
+- SQLAlchemy 2 async ORM is the implementation layer for models, relationships, constraints, and transactions.
+- Alembic owns schema migrations. Do not hand-write ad hoc runtime DDL in application code.
 - Redis Streams provide a lightweight append-only event bus for simulator, agents, commander, executor, and UI events.
 - Python async workers keep implementation simple while still separating responsibilities.
 - Docker Compose runs the whole backend stack with one command.
@@ -222,6 +226,46 @@ Everything visual should be derivable from the canonical world state and event s
 ## 4C. Runtime Guarantees
 
 These guarantees must be implemented before broad agent work starts. They prevent state drift, duplicate execution, lost stream events, and unsafe approvals.
+
+### ORM-First Persistence
+
+Implementation rule:
+
+```text
+Use SQLAlchemy 2 async ORM for normal database reads/writes.
+Use Alembic for schema creation and migration.
+Do not use direct SQL strings for application CRUD.
+Raw SQL in this document is schema intent only.
+```
+
+Allowed exceptions:
+
+```text
+Alembic migration operations.
+Postgres advisory locks when SQLAlchemy has no clean ORM helper.
+Postgres-specific indexes/constraints expressed in migrations.
+Small health checks if the ORM session is not initialized yet.
+```
+
+Implementation files:
+
+```text
+backend/app/db/models.py      SQLAlchemy ORM models
+backend/app/db/session.py     async engine, async_sessionmaker, transaction helpers
+backend/app/db/migrations/    Alembic migration scripts
+```
+
+Transaction style:
+
+```python
+async with async_session() as session:
+    async with session.begin():
+        patch = await session.get(MissionPatch, patch_id, with_for_update=True)
+        # mutate ORM objects
+        session.add(OutboxEvent(...))
+```
+
+Do not mix ORM state with separate raw SQL updates inside the same unit of work unless it is in an Alembic migration.
 
 ### Single World-State Writer
 
@@ -814,9 +858,11 @@ The API returns this shape from `GET /world-state`:
 
 ## 7. Database Schema
 
-Use PostgreSQL as source of truth.
+Use PostgreSQL as source of truth, implemented through SQLAlchemy ORM models and Alembic migrations.
 
-Enable UUID generation:
+The SQL below describes required tables, constraints, and indexes. Implement these as SQLAlchemy models plus Alembic migration operations, not as direct SQL calls from app code.
+
+Enable UUID generation in the first Alembic migration:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -2083,7 +2129,8 @@ Build:
 
 ```text
 FastAPI app
-Postgres connection
+SQLAlchemy async session
+Alembic migration setup
 Redis connection
 Docker Compose
 health endpoint
@@ -2092,11 +2139,27 @@ agent status endpoint
 WebSocket endpoint
 ```
 
+Initial backend dependencies:
+
+```text
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+alembic
+pydantic
+pydantic-settings
+redis
+openai
+python-dotenv
+```
+
 Acceptance criteria:
 
 ```text
 docker compose up starts API, Postgres, and Redis.
 GET /health returns ok.
+Alembic migration creates initial ORM-backed tables.
 GET /world-state returns seeded state.
 GET /agents/status returns seeded status for all agents.
 WS /ws/live emits a heartbeat or seeded state event.
@@ -2353,9 +2416,11 @@ First pull request target:
 ```text
 docker compose up
 GET /health
+alembic upgrade head
 GET /world-state
 WS /ws/live
 backend folder structure
+SQLAlchemy ORM models
 seed world state
 ```
 
