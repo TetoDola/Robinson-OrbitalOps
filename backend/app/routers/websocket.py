@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from datetime import datetime, timezone
 
@@ -10,8 +11,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.config import settings
+from app.constants import StreamName
 from app.db.models import AgentStatus, WorldStateCurrent
 from app.db.session import session_context
+from app.services.redis_client import get_redis
 
 router = APIRouter()
 
@@ -69,20 +72,38 @@ async def _send_seeded_snapshot(websocket: WebSocket) -> None:
             )
 
 
+async def _broadcast_ui_events(websocket: WebSocket, stop_event: asyncio.Event) -> None:
+    last_id = "$"
+    while not stop_event.is_set():
+        async with get_redis() as redis:
+            messages = await redis.xread({StreamName.ui_events.value: last_id}, count=10, block=1000)
+        for _stream, stream_messages in messages:
+            for message_id, fields in stream_messages:
+                last_id = message_id.decode("utf-8") if isinstance(message_id, bytes) else str(message_id)
+                payload_raw = fields.get(b"payload") or fields.get("payload")
+                if isinstance(payload_raw, bytes):
+                    payload_raw = payload_raw.decode("utf-8")
+                if payload_raw:
+                    event = json.loads(payload_raw)
+                    await websocket.send_json(event)
+
+
 @router.websocket("/ws/live")
 async def ws_live(websocket: WebSocket) -> None:
     await websocket.accept()
     stop_event = asyncio.Event()
     heartbeat_task = asyncio.create_task(_send_heartbeat(websocket, stop_event))
+    ui_task = asyncio.create_task(_broadcast_ui_events(websocket, stop_event))
 
     try:
         await _send_seeded_snapshot(websocket)
         while True:
-            await websocket.receive_text()
+            await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
     finally:
         stop_event.set()
-        heartbeat_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await heartbeat_task
+        for task in (heartbeat_task, ui_task):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task

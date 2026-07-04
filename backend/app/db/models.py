@@ -143,3 +143,99 @@ class TelemetryEvent(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+
+class AgentFinding(Base):
+    __tablename__ = "agent_findings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scenario_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[float] = mapped_column(Numeric, nullable=False)
+    affected_assets: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    finding: Mapped[str] = mapped_column(String(512), nullable=False)
+    evidence: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    risk: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    recommended_actions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    finding_signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    scenario_time_bucket: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "scenario_run_id",
+            "agent_name",
+            "finding_signature",
+            "scenario_time_bucket",
+            name="agent_findings_dedupe_idx",
+        ),
+    )
+
+
+class Incident(Base):
+    __tablename__ = "incidents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scenario_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    incident_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    finding_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    summary: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("scenario_run_id", "incident_key", name="incidents_run_key_idx"),
+    )
+
+
+class MissionPatch(Base):
+    __tablename__ = "mission_patches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scenario_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    incident_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(String(1024), nullable=False)
+    evidence: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    actions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    rollback_plan: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False, default="commander_agent")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Command(Base):
+    __tablename__ = "commands"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scenario_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mission_patch_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    input: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Approval(Base):
+    __tablename__ = "approvals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scenario_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mission_patch_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    operator_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    operator_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

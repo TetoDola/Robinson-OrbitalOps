@@ -75,6 +75,36 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  orbitops-agents:
+    build: ./backend
+    command: ["python", "-m", "app.agents.runner"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      REDIS_URL: redis://redis:6379/0
+      CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
+      CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
+      CRUSOE_MODEL: deepseek-ai/DeepSeek-V4-Flash
+      CRUSOE_ENABLED: ${CRUSOE_ENABLED:-false}
+    depends_on:
+      orbitops-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  orbitops-executor:
+    build: ./backend
+    command: ["python", "-m", "app.services.command_executor"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      orbitops-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   orbitops_pg:
     driver: local
