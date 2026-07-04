@@ -1,0 +1,1588 @@
+# OrbitOps Backend Plan
+
+OrbitOps backend is a Dockerized mission-control simulator: it models an orbital GPU datacenter, runs independent agents over live telemetry, calculates orbit-aware constraints, generates safe mission patches, executes approved mock commands, and streams the full incident lifecycle to the UI.
+
+The backend should not become a real spacecraft simulator. It should feel serious, deterministic, inspectable, and demoable.
+
+## 1. Backend Definition
+
+Build one Dockerized backend that:
+
+- Simulates a space GPU datacenter.
+- Runs mock independent agents.
+- Calculates orbit, power, radiation, thermal, vibration, and downlink state.
+- Generates mission patches.
+- Waits for human approval.
+- Executes mock commands.
+- Verifies recovery.
+- Streams world state and lifecycle events to the UI.
+
+Product loop:
+
+```text
+Monitor -> Detect -> Explain -> Propose -> Approve -> Execute -> Verify
+```
+
+Core safety rule:
+
+```text
+Agents monitor and propose.
+Commander creates mission patches.
+Safety validator blocks unsafe actions.
+Human approves.
+Executor acts.
+System verifies recovery.
+```
+
+## 2. Stack
+
+Use this stack for the hackathon backend:
+
+```text
+FastAPI
+PostgreSQL
+Redis Streams
+Python async workers
+Crusoe Managed Inference
+Docker Compose
+MinIO optional
+```
+
+Rationale:
+
+- FastAPI provides REST endpoints and WebSockets for live UI updates.
+- PostgreSQL is the source of truth.
+- PostgreSQL `jsonb` handles flexible telemetry, findings, and patch payloads.
+- Redis Streams provide a lightweight append-only event bus for simulator, agents, commander, executor, and UI events.
+- Python async workers keep implementation simple while still separating responsibilities.
+- Docker Compose runs the whole backend stack with one command.
+- Crusoe Managed Inference is used by the Commander Agent for explanation and JSON polish, not for deterministic safety decisions.
+- MinIO is optional for mock thermal images, vibration files, logs, and checkpoint manifests.
+
+Crusoe integration should follow the local root reference file:
+
+```text
+../CRUSOE.md
+```
+
+Known Crusoe settings from that file:
+
+```text
+CRUSOE_BASE_URL=https://api.inference.crusoecloud.com/v1/
+CRUSOE_API_KEY=<provided by environment>
+```
+
+Recommended default model for text-only Commander polishing:
+
+```text
+deepseek-ai/Deepseek-V4-Flash
+```
+
+Use an exact model string from `../CRUSOE.md`. Do not guess model names.
+
+## 3. Runtime Services
+
+Run these services in Docker Compose.
+
+### `orbitops-api`
+
+Responsibilities:
+
+- FastAPI backend.
+- REST API.
+- WebSocket live feed.
+- Mission patch approval and rejection endpoints.
+- Reads and writes PostgreSQL.
+- Publishes UI events.
+
+### `orbitops-simulator`
+
+Responsibilities:
+
+- Mock satellite orbit.
+- Mock GPU telemetry.
+- Mock power and battery state.
+- Mock radiation and ECC events.
+- Mock thermal, vibration, and downlink events.
+- Publishes telemetry to Redis Streams.
+
+### `orbitops-agents`
+
+Responsibilities:
+
+- Runs independent mock agents:
+  - Workload Agent.
+  - Thermal / Physical Health Agent.
+  - Power / Orbit Agent.
+  - Radiation / Integrity Agent.
+  - Checkpoint / Downlink Agent.
+  - Vibration Health Agent.
+  - Commander Agent.
+- Consumes telemetry and world state.
+- Produces findings and mission patches.
+
+### `orbitops-executor`
+
+Responsibilities:
+
+- Listens for approved mission patch actions.
+- Executes mock commands.
+- Mutates world state.
+- Emits command and verification events.
+
+### `postgres`
+
+Responsibilities:
+
+- Source of truth for assets, jobs, checkpoints, telemetry history, findings, incidents, patches, approvals, and commands.
+
+### `redis`
+
+Responsibilities:
+
+- Event bus.
+- Redis Streams for telemetry, findings, patches, command requests, command results, and UI events.
+
+### `minio` optional
+
+Responsibilities:
+
+- Mock object store for:
+  - Thermal images.
+  - Vibration telemetry files.
+  - Logs.
+  - Checkpoint manifests.
+
+Keep MinIO out of Phase 1 unless the demo needs file URLs.
+
+## 4. Architecture Flow
+
+```text
+Simulator
+  -> telemetry:events
+  -> Independent Mock Agents
+  -> agent:findings
+  -> Commander Agent
+  -> commander:patches
+  -> API Approval Endpoint
+  -> command:requests
+  -> Executor
+  -> command:results
+  -> Verification Events
+  -> World State + WebSocket Feed
+```
+
+The UI should mostly depend on:
+
+```text
+GET /world-state
+WS /ws/live
+```
+
+Everything visual should be derivable from the canonical world state and event stream.
+
+## 5. Folder Structure
+
+Use this backend structure:
+
+```text
+backend/
+  app/
+    main.py
+    config.py
+
+    api/
+      routes_health.py
+      routes_world_state.py
+      routes_satellite.py
+      routes_agents.py
+      routes_incidents.py
+      routes_mission_patches.py
+      routes_commands.py
+      routes_simulator.py
+      websocket.py
+
+    core/
+      schemas.py
+      enums.py
+      safety.py
+      events.py
+      constants.py
+
+    db/
+      models.py
+      session.py
+      seed.py
+      migrations/
+
+    services/
+      world_state.py
+      orbit_calculator.py
+      power_model.py
+      radiation_model.py
+      thermal_model.py
+      downlink_model.py
+      mission_patch_builder.py
+      command_executor.py
+      llm_client.py
+
+    agents/
+      base.py
+      workload_agent.py
+      thermal_physical_agent.py
+      power_orbit_agent.py
+      radiation_integrity_agent.py
+      checkpoint_downlink_agent.py
+      vibration_health_agent.py
+      commander_agent.py
+      runner.py
+
+    simulator/
+      scenarios.py
+      telemetry_generator.py
+      state_machine.py
+      mock_assets.py
+      mock_jobs.py
+
+  Dockerfile
+  pyproject.toml
+
+docker-compose.yml
+```
+
+## 6. Canonical World State
+
+Maintain one canonical world state object in memory and persist important changes to Postgres.
+
+The API returns this shape from `GET /world-state`:
+
+```json
+{
+  "timestamp": "2026-07-04T19:30:00Z",
+  "satellite": {
+    "id": "orbital-dc-01",
+    "lat": 48.1,
+    "lon": 2.3,
+    "alt_km": 550,
+    "velocity_km_s": 8.05,
+    "orbit_phase": "approaching_eclipse",
+    "time_to_eclipse_min": 11,
+    "ground_link": "connected"
+  },
+  "power": {
+    "battery_percent": 38,
+    "solar_kw": 1.2,
+    "compute_budget_kw": 7.5,
+    "cooling_power_kw": 2.1,
+    "comms_power_kw": 1.0,
+    "mode": "degraded_safe"
+  },
+  "radiation": {
+    "risk": "elevated",
+    "region": "risk-zone-alpha",
+    "ecc_errors_last_5min": 921
+  },
+  "thermal": {
+    "highest_temp_c": 86,
+    "hotspot_node": "node-c",
+    "cooling_status": "degraded"
+  },
+  "downlink": {
+    "window_open": true,
+    "capacity_gb": 22,
+    "used_gb": 0,
+    "time_remaining_min": 18
+  },
+  "training": {
+    "job_id": "llm-train-042",
+    "status": "running",
+    "current_step": 184920,
+    "last_trusted_checkpoint": "ckpt-184500",
+    "latest_checkpoint": "ckpt-184900",
+    "latest_checkpoint_status": "suspect"
+  },
+  "nodes": [
+    {
+      "id": "node-a",
+      "status": "hot_but_usable",
+      "gpu_util": 94,
+      "temp_c": 82,
+      "power_w": 620
+    },
+    {
+      "id": "node-b",
+      "status": "integrity_risk",
+      "gpu_util": 12,
+      "temp_c": 62,
+      "ecc_errors": 921
+    },
+    {
+      "id": "node-c",
+      "status": "thermal_physical_risk",
+      "gpu_util": 5,
+      "temp_c": 88,
+      "vibration_score": 0.91
+    }
+  ],
+  "latest_agent_findings": [],
+  "active_mission_patch": null
+}
+```
+
+## 7. Database Schema
+
+Use PostgreSQL as source of truth.
+
+### `assets`
+
+```sql
+CREATE TABLE assets (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  parent_id TEXT REFERENCES assets(id),
+  status TEXT NOT NULL DEFAULT 'nominal',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Asset examples:
+
+```text
+satellite/orbital-dc-01
+rack/rack-1
+node/node-a
+gpu/gpu-a-0
+sensor/thermal-cam-1
+sensor/vibration-loop-a
+```
+
+### `jobs`
+
+```sql
+CREATE TABLE jobs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  status TEXT NOT NULL,
+  current_step BIGINT DEFAULT 0,
+  assigned_assets JSONB NOT NULL DEFAULT '[]',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### `checkpoints`
+
+```sql
+CREATE TABLE checkpoints (
+  id TEXT PRIMARY KEY,
+  job_id TEXT REFERENCES jobs(id),
+  step BIGINT NOT NULL,
+  size_gb NUMERIC NOT NULL,
+  delta_size_gb NUMERIC NOT NULL,
+  status TEXT NOT NULL,
+  trusted BOOLEAN DEFAULT false,
+  ground_confirmed BOOLEAN DEFAULT false,
+  hash_verified BOOLEAN DEFAULT false,
+  metadata JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Checkpoint statuses:
+
+```text
+trusted
+suspect
+invalid
+pending_verification
+ground_confirmed
+```
+
+### `telemetry_events`
+
+```sql
+CREATE TABLE telemetry_events (
+  id BIGSERIAL PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  asset_id TEXT,
+  severity TEXT DEFAULT 'INFO',
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### `agent_findings`
+
+```sql
+CREATE TABLE agent_findings (
+  id UUID PRIMARY KEY,
+  agent_name TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  confidence NUMERIC NOT NULL,
+  affected_assets JSONB NOT NULL DEFAULT '[]',
+  finding TEXT NOT NULL,
+  evidence JSONB NOT NULL DEFAULT '[]',
+  risk TEXT,
+  recommended_actions JSONB NOT NULL DEFAULT '[]',
+  status TEXT DEFAULT 'open',
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### `incidents`
+
+```sql
+CREATE TABLE incidents (
+  id UUID PRIMARY KEY,
+  title TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  status TEXT NOT NULL,
+  finding_ids JSONB NOT NULL DEFAULT '[]',
+  summary TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### `mission_patches`
+
+```sql
+CREATE TABLE mission_patches (
+  id UUID PRIMARY KEY,
+  incident_id UUID REFERENCES incidents(id),
+  severity TEXT NOT NULL,
+  status TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  evidence JSONB NOT NULL DEFAULT '[]',
+  actions JSONB NOT NULL DEFAULT '[]',
+  rollback_plan JSONB NOT NULL DEFAULT '{}',
+  approval_required BOOLEAN DEFAULT true,
+  created_by TEXT DEFAULT 'commander_agent',
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Mission patch statuses:
+
+```text
+draft
+pending_approval
+approved
+rejected
+executing
+verified
+failed
+rolled_back
+```
+
+### `commands`
+
+```sql
+CREATE TABLE commands (
+  id UUID PRIMARY KEY,
+  mission_patch_id UUID REFERENCES mission_patches(id),
+  action_type TEXT NOT NULL,
+  target_asset_id TEXT,
+  status TEXT NOT NULL,
+  input JSONB NOT NULL DEFAULT '{}',
+  result JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### `approvals`
+
+```sql
+CREATE TABLE approvals (
+  id UUID PRIMARY KEY,
+  mission_patch_id UUID REFERENCES mission_patches(id),
+  status TEXT NOT NULL,
+  operator_id TEXT,
+  operator_note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  decided_at TIMESTAMPTZ
+);
+```
+
+## 8. Redis Streams
+
+Use these streams:
+
+```text
+telemetry:events
+agent:findings
+commander:patches
+command:requests
+command:results
+ui:events
+```
+
+Flow:
+
+```text
+simulator -> telemetry:events
+agents -> agent:findings
+commander -> commander:patches
+api approval -> command:requests
+executor -> command:results
+api/websocket -> ui:events
+```
+
+Example event:
+
+```json
+{
+  "type": "radiation_update",
+  "timestamp": "2026-07-04T19:30:00Z",
+  "asset_id": "node-b",
+  "payload": {
+    "risk": "elevated",
+    "ecc_correctable_count": 921,
+    "xid_event": true
+  }
+}
+```
+
+## 9. Mock Orbit Calculator
+
+Do not implement precise orbital mechanics. Use deterministic demo math.
+
+Constants:
+
+```text
+T_orbit = 5400 seconds
+altitude = 550 km
+inclination = 53 degrees
+earth_rotation_period = 86164 seconds
+earth_radius_km = 6371
+```
+
+Let:
+
+```text
+t = seconds since scenario start
+theta = 2 * pi * (t mod T_orbit) / T_orbit
+```
+
+Latitude:
+
+```text
+lat(t) = inclination * sin(theta)
+```
+
+Longitude:
+
+```text
+lon(t) = wrap180(lon0 + 360 * t / T_orbit - 360 * t / 86164)
+```
+
+Altitude:
+
+```text
+alt(t) = 550 km
+```
+
+Velocity:
+
+```text
+v = 2 * pi * (6371 + 550) / 5400 = about 8.05 km/s
+```
+
+## 10. Ground Station and Downlink Model
+
+Use one mock ground station:
+
+```text
+ground_station_lat = 48.8566
+ground_station_lon = 2.3522
+```
+
+Angular distance:
+
+```text
+delta = arccos(
+  sin(lat_s) * sin(lat_g)
+  + cos(lat_s) * cos(lat_g) * cos(lon_s - lon_g)
+)
+```
+
+Horizon visibility angle:
+
+```text
+alpha = arccos(R_earth / (R_earth + h))
+```
+
+Visible if:
+
+```text
+delta < alpha
+```
+
+Demo capacities:
+
+```text
+physical_estimate_capacity_gb = bandwidth_gbps * window_remaining_seconds / 8
+scenario_limited_capacity_gb = 22
+full_checkpoint_gb = 180
+```
+
+The UI should show the scenario-limited value because it creates the checkpoint conflict.
+
+## 11. Sunlight and Eclipse Model
+
+Use a simple phase model:
+
+```text
+orbit_phase_seconds = t mod 5400
+sunlight if orbit_phase_seconds < 3300
+eclipse if orbit_phase_seconds >= 3300
+```
+
+Durations:
+
+```text
+sunlight_duration = 55 minutes
+eclipse_duration = 35 minutes
+```
+
+Power model gets:
+
+```text
+sun_factor = 1 if sunlight else 0
+```
+
+## 12. Power Model
+
+Model:
+
+```text
+solar generation
+battery state
+GPU load
+cooling load
+downlink load
+bus overhead
+```
+
+Solar:
+
+```text
+P_solar = P_solar_max * sun_factor * degradation_factor
+P_solar_max = 12 kW
+degradation_factor = 0.95
+```
+
+GPU power:
+
+```text
+P_gpu_i = P_idle + util_i * (P_max - P_idle) * derate_factor
+P_idle = 80 W
+P_max = 700 W
+derate_factor = 1.0 normally, 0.7 in degraded mode
+```
+
+Cooling:
+
+```text
+P_cooling = P_cooling_base + k_cooling * max(0, T_hotspot - T_nominal)
+P_cooling_base = 1.5 kW
+k_cooling = 0.08 kW/C
+T_nominal = 65 C
+```
+
+Total load:
+
+```text
+P_load = P_compute + P_cooling + P_downlink + P_bus
+```
+
+Battery:
+
+```text
+E_batt_next = clamp(
+  E_batt + (P_solar - P_load) * dt_hours * eta,
+  0,
+  E_batt_max
+)
+SOC = 100 * E_batt / E_batt_max
+```
+
+Risk thresholds:
+
+```text
+SOC > 50%       GREEN
+30%-50%         YELLOW
+15%-30%         ORANGE
+<15%            RED
+```
+
+Power Agent alert:
+
+```text
+if time_to_eclipse < 15 min and SOC < 45% and checkpoint_age > 30 min:
+    recommend checkpoint_before_eclipse
+```
+
+## 13. Thermal Model
+
+Do not model fans cooling air. In vacuum, treat heat rejection as radiation and conduction.
+
+Simple model:
+
+```text
+T_next = T_current
+       + alpha * P_gpu
+       - beta * radiator_effectiveness * (T_current - T_radiator)
+       - gamma * cooling_mode
+       + anomaly_heat
+```
+
+Example values:
+
+```text
+alpha = 0.25 C per kW per tick
+beta = 0.04
+gamma = 0.4 if cooling normal, 0.1 if cooling degraded
+T_radiator = 20 C
+```
+
+Thermal severity:
+
+```text
+T < 70 C       GREEN
+70-80 C        YELLOW
+80-88 C        ORANGE
+>88 C          RED
+```
+
+Thermal anomaly score:
+
+```text
+thermal_score =
+  0.45 * normalize(temp_c, 65, 95)
++ 0.25 * normalize(dT_dt, 0, 2)
++ 0.20 * hotspot_score
++ 0.10 * cooling_degradation_score
+```
+
+Thermal Agent:
+
+```text
+if thermal_score > 0.75:
+    severity = RED
+elif thermal_score > 0.55:
+    severity = ORANGE
+elif thermal_score > 0.35:
+    severity = YELLOW
+```
+
+## 14. Vibration Health Model
+
+Do not call this audio in space. Use structure-borne vibration from contact sensors.
+
+Event:
+
+```json
+{
+  "type": "vibration_metric",
+  "asset_id": "coolant-loop-a",
+  "payload": {
+    "rms_vibration": 0.82,
+    "dominant_frequency_hz": 147,
+    "baseline_frequency_hz": 92,
+    "spectral_anomaly_score": 0.91
+  }
+}
+```
+
+Score:
+
+```text
+frequency_shift = abs(f_current - f_baseline) / f_baseline
+
+vibration_score =
+  0.40 * normalize(rms_vibration, 0.2, 1.0)
++ 0.35 * normalize(frequency_shift, 0.05, 0.7)
++ 0.25 * spectral_anomaly_score
+```
+
+Agent:
+
+```text
+if vibration_score > 0.75 and thermal_score > 0.55:
+    finding = "possible cooling loop mechanical fault"
+```
+
+Recommended actions:
+
+```text
+increase_checkpoint_frequency
+reduce_gpu_power_limit
+switch_to_backup_cooling_loop
+mark_component_for_inspection
+```
+
+## 15. Radiation and Training Integrity Model
+
+Do not simulate exact particle hits. Simulate risk and evidence.
+
+Score:
+
+```text
+radiation_score =
+  0.35 * zone_risk
++ 0.25 * ecc_rate_score
++ 0.20 * xid_score
++ 0.20 * training_integrity_score
+```
+
+Inputs:
+
+```text
+zone_risk = 0, 0.5, or 1
+ecc_rate_score = normalize(ecc_errors_last_5min, 10, 1000)
+xid_score = 1 if GPU Xid event occurred else 0
+training_integrity_score = 1 if NaN/loss divergence/hash mismatch else 0
+```
+
+Severity:
+
+```text
+score < 0.3      GREEN
+0.3-0.5          YELLOW
+0.5-0.75         ORANGE
+>0.75            RED
+```
+
+Integrity Agent conditions:
+
+```text
+if ecc_errors_last_5min > 500:
+    recommend cordon_gpu_for_critical_training
+
+if loss_is_nan:
+    recommend increase_verification_level
+
+if checkpoint_created_during_risk_window and ecc_errors_high:
+    recommend mark_checkpoint_suspect
+
+if checkpoint_hash_mismatch:
+    recommend rollback_to_last_trusted_checkpoint
+```
+
+Key product framing:
+
+```text
+OrbitOps does not predict exact bit flips.
+It detects corruption evidence and protects training integrity.
+```
+
+## 16. Workload and GPU Anomaly Model
+
+Score:
+
+```text
+workload_mismatch_score =
+  0.40 * gpu_busy_without_job
++ 0.25 * vram_leak_score
++ 0.20 * straggler_score
++ 0.15 * stuck_job_score
+```
+
+Inputs:
+
+```text
+gpu_busy_without_job = 1 if gpu_util > 80% and scheduler_job_count == 0 else 0
+vram_leak_score = normalize(vram_allocated_after_job_end_min, 1, 15)
+straggler_score = normalize(rank_step_lag, 0.05, 0.30)
+stuck_job_score = 1 if no_step_progress_for_min > threshold else 0
+```
+
+Agent conditions:
+
+```text
+if gpu_util > 85% and no_active_job:
+    finding = "GPU usage high with no scheduled job"
+    recommend snapshot_evidence, cordon_node, kill_orphan_process_after_approval
+
+if no_step_progress_for_min > 5 and gpu_util > 80:
+    finding = "training job appears stuck"
+    recommend restart_worker, run_distributed_health_check
+```
+
+## 17. Checkpoint and Downlink Model
+
+Primary problem:
+
+```text
+full checkpoint may be larger than available downlink
+latest checkpoint may be suspect
+last trusted checkpoint must not be overwritten
+```
+
+Checkpoint freshness risk:
+
+```text
+checkpoint_age_score = normalize(checkpoint_age_min, 15, 90)
+```
+
+Downlink fit ratio:
+
+```text
+fit_ratio = available_downlink_gb / checkpoint_size_gb
+```
+
+If:
+
+```text
+fit_ratio < 1
+```
+
+then full checkpoint does not fit.
+
+Transfer priority:
+
+```text
+priority_score(item) =
+  0.40 * recovery_value
++ 0.25 * small_size_bonus
++ 0.20 * trust_value
++ 0.15 * urgency
+```
+
+For the demo:
+
+```text
+Full checkpoint = 180 GB
+Available downlink = 22 GB
+Manifest + hashes = 0.4 GB
+Delta checkpoint = 14 GB
+```
+
+Recommendation:
+
+```text
+send manifest, hashes, logs, and delta checkpoint
+defer full checkpoint
+```
+
+## 18. Agent Output Schema
+
+All agents must output this shape:
+
+```json
+{
+  "agent": "radiation_integrity_agent",
+  "timestamp": "2026-07-04T19:30:00Z",
+  "severity": "RED",
+  "confidence": 0.86,
+  "affected_assets": ["node-b", "gpu-b-3", "ckpt-184900"],
+  "finding": "ECC errors spiked before checkpoint completion.",
+  "evidence": [
+    "ECC errors increased from 12 to 921",
+    "loss became NaN on rank 17",
+    "checkpoint ckpt-184900 completed during elevated radiation window"
+  ],
+  "risk": "Latest checkpoint may contain corrupted training state.",
+  "recommended_actions": [
+    "mark_checkpoint_suspect",
+    "rollback_to_last_trusted_checkpoint",
+    "cordon_gpu_for_critical_training"
+  ]
+}
+```
+
+This interface lets later teams replace mock agents with real agents without changing the backend.
+
+## 19. Commander Agent
+
+The Commander consumes active findings and produces one mission patch.
+
+Hackathon implementation:
+
+```text
+Rule-based action selection
++ Crusoe Managed Inference for explanation and final JSON polish
+```
+
+Do not let the LLM decide safety. Deterministic code decides safety and allowed actions.
+
+Prompt structure:
+
+```text
+STATIC PREFIX:
+- OrbitOps mission doctrine
+- allowed commands
+- safety rules
+- mission patch JSON schema
+- agent role definitions
+- approval policy
+
+DYNAMIC SUFFIX:
+- latest world state
+- latest agent findings
+- current incident timeline
+```
+
+This structure is cache-friendly because stable context stays at the beginning.
+
+## 20. Mission Patch Schema
+
+```json
+{
+  "mission_patch_id": "patch-042",
+  "incident_type": "training_continuity_risk",
+  "severity": "RED",
+  "summary": "Critical training job is at risk due to thermal stress, ECC escalation, approaching eclipse, and limited downlink.",
+  "evidence": [
+    {
+      "agent": "thermal_physical_agent",
+      "finding": "Node A temperature is rising into ORANGE range."
+    },
+    {
+      "agent": "radiation_integrity_agent",
+      "finding": "Checkpoint ckpt-184900 is suspect."
+    },
+    {
+      "agent": "power_orbit_agent",
+      "finding": "Eclipse begins in 11 minutes."
+    },
+    {
+      "agent": "checkpoint_downlink_agent",
+      "finding": "Full checkpoint exceeds current downlink capacity."
+    }
+  ],
+  "actions": [
+    {
+      "type": "mark_checkpoint_suspect",
+      "checkpoint_id": "ckpt-184900"
+    },
+    {
+      "type": "rollback_training",
+      "checkpoint_id": "ckpt-184500"
+    },
+    {
+      "type": "set_gpu_power_limit",
+      "node_id": "node-a",
+      "power_percent": 70
+    },
+    {
+      "type": "cordon_node",
+      "node_id": "node-b",
+      "scope": "critical_training"
+    },
+    {
+      "type": "increase_checkpoint_frequency",
+      "job_id": "llm-train-042",
+      "interval_minutes": 15
+    },
+    {
+      "type": "transfer_priority",
+      "send_first": [
+        "checkpoint_manifest",
+        "checkpoint_hashes",
+        "training_logs",
+        "delta_checkpoint"
+      ],
+      "defer": [
+        "full_checkpoint"
+      ]
+    }
+  ],
+  "approval_required": true,
+  "rollback_plan": {
+    "if_verification_fails": [
+      "pause_training",
+      "preserve_forensics",
+      "resume_from_ground_confirmed_checkpoint"
+    ]
+  }
+}
+```
+
+## 21. Safety Validator
+
+Rules:
+
+```text
+Cannot execute without approval unless action is safe_autonomous.
+Cannot rollback to suspect checkpoint.
+Cannot promote suspect checkpoint as trusted.
+Cannot schedule critical job on RED integrity node.
+Cannot overwrite last trusted checkpoint.
+Cannot reduce cooling below minimum.
+Cannot delete artifact in demo mode.
+Cannot hard reset node without approval.
+```
+
+Safe autonomous actions:
+
+```text
+collect_logs
+snapshot_evidence
+increase_monitoring
+run_health_check
+mark_node_suspect
+increase_checkpoint_frequency
+```
+
+Approval-required actions:
+
+```text
+rollback_training
+cordon_node
+pause_job
+kill_process
+set_gpu_power_limit
+switch_cooling_loop
+transfer_checkpoint
+```
+
+Validator output:
+
+```json
+{
+  "allowed": false,
+  "reason": "Cannot rollback to ckpt-184900 because checkpoint status is suspect.",
+  "safe_alternative": "rollback_to_ckpt-184500"
+}
+```
+
+## 22. Command Executor
+
+The executor listens only after approval.
+
+### `set_gpu_power_limit`
+
+Effects:
+
+```text
+derate_factor = power_percent / 100
+P_gpu decreases
+T_node trend decreases
+training_throughput decreases
+```
+
+Verification:
+
+```text
+temperature_slope <= 0 after 30 seconds
+```
+
+### `mark_checkpoint_suspect`
+
+Effects:
+
+```text
+checkpoint.status = "suspect"
+checkpoint.trusted = false
+```
+
+Verification:
+
+```text
+checkpoint cannot be selected as recovery target
+```
+
+### `rollback_training`
+
+Effects:
+
+```text
+training.current_step = checkpoint.step
+training.status = "recovering"
+latest_checkpoint remains quarantined
+```
+
+Verification:
+
+```text
+job resumes from trusted checkpoint
+loss is finite
+health check passes
+```
+
+### `cordon_node`
+
+Effects:
+
+```text
+node.status = "cordoned"
+node.allowed_for_critical_training = false
+```
+
+Verification:
+
+```text
+scheduler target set excludes node
+```
+
+### `transfer_priority`
+
+Effects:
+
+```text
+downlink_queue = [
+  manifest,
+  hashes,
+  logs,
+  delta_checkpoint,
+  full_checkpoint_deferred
+]
+```
+
+Verification:
+
+```text
+critical metadata transferred first
+used_gb <= capacity_gb
+```
+
+## 23. API Endpoints
+
+Implement:
+
+```text
+GET /health
+
+GET /world-state
+GET /satellite/position
+GET /satellite/orbit
+
+GET /agents
+GET /agents/findings
+
+GET /incidents
+GET /incidents/{id}
+
+GET /mission-patches
+GET /mission-patches/active
+GET /mission-patches/{id}
+POST /mission-patches/{id}/approve
+POST /mission-patches/{id}/reject
+
+GET /commands
+GET /commands/{id}
+
+POST /simulator/scenario/{scenario_name}
+POST /simulator/pause
+POST /simulator/resume
+POST /simulator/reset
+
+WS /ws/live
+```
+
+WebSocket event types:
+
+```text
+world_state.updated
+telemetry.received
+agent.finding.created
+incident.created
+mission_patch.created
+mission_patch.approved
+command.started
+command.succeeded
+command.failed
+verification.completed
+```
+
+## 24. Main Demo Scenario
+
+Use one scripted scenario.
+
+```text
+T+00:00
+Normal training run.
+
+T+00:20
+Power / Orbit Agent: eclipse approaching.
+
+T+00:40
+Thermal Agent: Node A getting hot.
+
+T+01:00
+Radiation Agent: Node B ECC errors rising.
+
+T+01:20
+Training metric: loss becomes NaN on rank 17.
+
+T+01:40
+Checkpoint ckpt-184900 created during elevated risk.
+
+T+02:00
+Downlink Agent: full checkpoint 180 GB, available downlink 22 GB.
+
+T+02:20
+Vibration Agent: coolant loop anomaly.
+
+T+02:40
+Commander creates mission patch.
+
+T+03:00
+Operator approves.
+
+T+03:20
+Executor derates Node A, marks checkpoint suspect, rolls back to ckpt-184500, cordons Node B, prioritizes manifest/hash/delta transfer.
+
+T+04:00
+Verification succeeds.
+```
+
+This single scenario demonstrates the whole product loop.
+
+## 25. Implementation Phases
+
+### Phase 1: Backend skeleton
+
+Build:
+
+```text
+FastAPI app
+Postgres connection
+Redis connection
+Docker Compose
+health endpoint
+world-state endpoint
+WebSocket endpoint
+```
+
+Acceptance criteria:
+
+```text
+docker compose up starts API, Postgres, and Redis.
+GET /health returns ok.
+GET /world-state returns seeded state.
+WS /ws/live emits a heartbeat or seeded state event.
+```
+
+### Phase 2: Simulator
+
+Build:
+
+```text
+mock orbit calculator
+mock power model
+mock thermal model
+mock radiation model
+mock downlink model
+scenario state machine
+```
+
+Acceptance criteria:
+
+```text
+orbitops-simulator publishes telemetry:events.
+world state changes over time.
+satellite position and eclipse countdown update.
+```
+
+### Phase 3: Mock agents
+
+Build independent workers:
+
+```text
+workload agent
+thermal / physical agent
+power / orbit agent
+radiation / integrity agent
+checkpoint / downlink agent
+vibration health agent
+```
+
+Acceptance criteria:
+
+```text
+Each agent emits the shared finding schema.
+Findings appear in Postgres and agent:findings.
+UI receives agent.finding.created events.
+```
+
+### Phase 4: Commander
+
+Build:
+
+```text
+finding grouping
+incident creation
+mission patch builder
+optional Crusoe Managed Inference call
+```
+
+Acceptance criteria:
+
+```text
+Commander groups active findings into one incident.
+Commander creates patch-042 in pending_approval state.
+Safety validator runs before patch becomes approvable.
+```
+
+### Phase 5: Approval flow
+
+Build:
+
+```text
+pending approval state
+approve endpoint
+reject endpoint
+patch status transitions
+```
+
+Acceptance criteria:
+
+```text
+POST /mission-patches/{id}/approve creates approval record.
+Approved patch emits mission_patch.approved.
+Rejected patch emits mission_patch.rejected or equivalent UI event.
+```
+
+### Phase 6: Executor
+
+Build:
+
+```text
+command queue
+mock command effects
+verification events
+world-state mutation
+```
+
+Acceptance criteria:
+
+```text
+Executor consumes command:requests.
+Executor updates commands and world state.
+Executor emits command.started, command.succeeded, and verification.completed.
+Active patch reaches verified state.
+```
+
+### Phase 7: Polish
+
+Build:
+
+```text
+scenario reset
+demo seed data
+better logs
+WebSocket reconnect stability
+frontend-friendly payloads
+```
+
+Acceptance criteria:
+
+```text
+POST /simulator/reset returns the demo to T+00:00.
+The UI can run the same demo repeatedly.
+No manual database cleanup is needed.
+```
+
+## 26. Minimal Docker Compose
+
+```yaml
+services:
+  orbitops-api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      REDIS_URL: redis://redis:6379/0
+      CRUSOE_API_KEY: ${CRUSOE_API_KEY}
+      CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
+      CRUSOE_MODEL: deepseek-ai/Deepseek-V4-Flash
+    depends_on:
+      - postgres
+      - redis
+
+  orbitops-simulator:
+    build: ./backend
+    command: python -m app.simulator.telemetry_generator
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
+  orbitops-agents:
+    build: ./backend
+    command: python -m app.agents.runner
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      REDIS_URL: redis://redis:6379/0
+      CRUSOE_API_KEY: ${CRUSOE_API_KEY}
+      CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
+      CRUSOE_MODEL: deepseek-ai/Deepseek-V4-Flash
+    depends_on:
+      - postgres
+      - redis
+
+  orbitops-executor:
+    build: ./backend
+    command: python -m app.services.command_executor
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: orbitops
+      POSTGRES_PASSWORD: orbitops
+      POSTGRES_DB: orbitops
+    ports:
+      - "5432:5432"
+    volumes:
+      - orbitops_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+volumes:
+  orbitops_pg:
+```
+
+## 27. Immediate Next Step
+
+Start implementation with Phase 1 only.
+
+Do not build all agents first. Build the backend skeleton and one static seeded world state, then add simulator ticks, then add agents.
+
+First pull request target:
+
+```text
+docker compose up
+GET /health
+GET /world-state
+WS /ws/live
+backend folder structure
+seed world state
+```
+
+## 28. External References
+
+Use these references when implementing:
+
+- FastAPI WebSockets: https://fastapi.tiangolo.com/advanced/websockets/
+- Redis Streams: https://redis.io/docs/latest/develop/data-types/streams/
+- PostgreSQL JSON types: https://www.postgresql.org/docs/current/datatype-json.html
+- Docker Compose: https://docs.docker.com/compose/
+- Crusoe Managed Inference local reference: `../CRUSOE.md`
+- NASA SmallSat power guidance: https://www.nasa.gov/smallsat-institute/sst-soa/power-subsystems/
+- NASA SmallSat thermal guidance: https://www.nasa.gov/smallsat-institute/sst-soa/thermal-control/
+- ESA space radiation overview: https://www.esa.int/Enabling_Support/Space_Engineering_Technology/Swarm_vs._space_radiation_the_first_10_years
+- NASA radiation effects reference: https://ntrs.nasa.gov/citations/19890014178
