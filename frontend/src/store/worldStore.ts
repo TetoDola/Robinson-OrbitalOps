@@ -75,6 +75,7 @@ interface WorldStore {
   connectionStatus: ConnectionStatus;
   lastEvent: BackendLiveEvent | null;
   lastEventAt: string | null;
+  demoResetAt: string | null;
   setWorldState: (state: WorldState, version?: number | null, scenarioRunId?: string | null) => void;
   setTelemetry: (telemetry: TelemetrySnapshot) => void;
   setAgents: (agents: AgentStatusItem[]) => void;
@@ -108,6 +109,7 @@ export const useWorldStore = create<WorldStore>()(
     connectionStatus: "idle",
     lastEvent: null,
     lastEventAt: null,
+    demoResetAt: null,
     setWorldState: (worldState, worldVersion = null, scenarioRunId = null) =>
       set({ worldState, worldVersion, scenarioRunId }),
     setTelemetry: (telemetry) => set({ telemetry }),
@@ -134,6 +136,20 @@ export const useWorldStore = create<WorldStore>()(
     setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
     ingestLiveEvent: (event) =>
       set((state) => {
+        const upsertCommand = (commandPatch: Partial<Command> & { id: string; mission_patch_id: string }): Command[] => {
+          const existing = state.commands.find((command) => command.id === commandPatch.id);
+          const command: Command = {
+            id: commandPatch.id,
+            mission_patch_id: commandPatch.mission_patch_id,
+            action_type: commandPatch.action_type ?? existing?.action_type ?? "unknown",
+            target_asset_id: commandPatch.target_asset_id ?? existing?.target_asset_id ?? null,
+            status: commandPatch.status ?? existing?.status ?? "unknown",
+            input: commandPatch.input ?? existing?.input ?? {},
+            result: commandPatch.result ?? existing?.result ?? {},
+          };
+          return [...state.commands.filter((item) => item.id !== command.id), command];
+        };
+
         if (event.type === "world_state.updated") {
           const payload = event.payload as Extract<BackendLiveEvent, { type: "world_state.updated" }>["payload"];
           return {
@@ -157,14 +173,40 @@ export const useWorldStore = create<WorldStore>()(
           };
         }
 
-        if (event.type === "mission_patch.approved") {
+        if (event.type === "simulator.reset") {
+          return {
+            incidents: [],
+            missionPatch: null,
+            commands: [],
+            patchMode: "pending",
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+            demoResetAt: event.timestamp,
+          };
+        }
+
+        if (event.type === "mission_patch.approved" || event.type === "mission_patch.executing") {
           const payload = event.payload as { id: string; status: string };
           return {
             missionPatch:
               state.missionPatch?.id === payload.id
                 ? { ...state.missionPatch, status: payload.status }
                 : state.missionPatch,
-            patchMode: "execute",
+            patchMode: event.type === "mission_patch.executing" ? "execute" : "execute",
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+            demoResetAt: null,
+          };
+        }
+
+        if (event.type === "mission_patch.rejected") {
+          const payload = event.payload as { id: string; status: string };
+          return {
+            missionPatch:
+              state.missionPatch?.id === payload.id
+                ? { ...state.missionPatch, status: payload.status }
+                : state.missionPatch,
+            patchMode: "reject",
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -173,6 +215,51 @@ export const useWorldStore = create<WorldStore>()(
         if (event.type === "command.batch_created") {
           return {
             patchMode: "execute",
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+            demoResetAt: null,
+          };
+        }
+
+        if (event.type === "command.started") {
+          const payload = event.payload as {
+            id: string;
+            mission_patch_id: string;
+            action_type: string;
+            status: string;
+          };
+          return {
+            commands: upsertCommand(payload),
+            patchMode: "execute",
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+          };
+        }
+
+        if (event.type === "command.succeeded") {
+          const payload = event.payload as {
+            id: string;
+            mission_patch_id: string;
+            action_type: string;
+            status: string;
+            result: Record<string, unknown>;
+          };
+          return {
+            commands: upsertCommand(payload),
+            patchMode: "verify",
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+          };
+        }
+
+        if (event.type === "verification.completed") {
+          const payload = event.payload as { mission_patch_id: string; status: string };
+          return {
+            missionPatch:
+              state.missionPatch?.id === payload.mission_patch_id
+                ? { ...state.missionPatch, status: payload.status }
+                : state.missionPatch,
+            patchMode: "verified",
             lastEvent: event,
             lastEventAt: event.timestamp,
           };

@@ -183,6 +183,22 @@ export type MissionPatchApprovedEvent = LiveEventBase<
   }
 >;
 
+export type MissionPatchExecutingEvent = LiveEventBase<
+  "mission_patch.executing",
+  {
+    id: string;
+    status: string;
+  }
+>;
+
+export type MissionPatchRejectedEvent = LiveEventBase<
+  "mission_patch.rejected",
+  {
+    id: string;
+    status: string;
+  }
+>;
+
 export type CommandBatchCreatedEvent = LiveEventBase<
   "command.batch_created",
   {
@@ -191,10 +207,54 @@ export type CommandBatchCreatedEvent = LiveEventBase<
   }
 >;
 
+export type SimulatorResetEvent = LiveEventBase<
+  "simulator.reset",
+  {
+    scenario: string;
+    scenario_run_id: string;
+    status: string;
+  }
+>;
+
+export type CommandStartedEvent = LiveEventBase<
+  "command.started",
+  {
+    id: string;
+    mission_patch_id: string;
+    action_type: string;
+    status: string;
+  }
+>;
+
+export type CommandSucceededEvent = LiveEventBase<
+  "command.succeeded",
+  {
+    id: string;
+    mission_patch_id: string;
+    action_type: string;
+    status: string;
+    result: Record<string, unknown>;
+  }
+>;
+
+export type VerificationCompletedEvent = LiveEventBase<
+  "verification.completed",
+  {
+    mission_patch_id: string;
+    status: string;
+  }
+>;
+
 export type BackendLiveEvent =
   | HeartbeatEvent
   | WorldStateUpdatedEvent
   | AgentStatusUpdatedEvent
   | MissionPatchApprovedEvent
+  | MissionPatchExecutingEvent
+  | MissionPatchRejectedEvent
   | CommandBatchCreatedEvent
+  | SimulatorResetEvent
+  | CommandStartedEvent
+  | CommandSucceededEvent
+  | VerificationCompletedEvent
   | LiveEventBase<string, unknown>;

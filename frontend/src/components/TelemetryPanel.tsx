@@ -2,41 +2,55 @@ import { useWorldStore } from "../store/worldStore";
 
 const speeds = [1, 60, 600];
 
-function agentMessage(agentName: string, fallback: string): string {
-  const agent = useWorldStore
-    .getState()
-    .agents.find((item) => item.agent === agentName || item.display_name.toLowerCase().includes(agentName));
-  return agent?.message ?? fallback;
-}
-
 export default function TelemetryPanel() {
   const telemetry = useWorldStore((state) => state.telemetry);
   const simSpeed = useWorldStore((state) => state.simSpeed);
   const followNode = useWorldStore((state) => state.followNode);
   const setSimSpeed = useWorldStore((state) => state.setSimSpeed);
   const setFollowNode = useWorldStore((state) => state.setFollowNode);
-  const agents = useWorldStore((state) => state.agents);
-
-  const commander =
-    agents.find((item) => item.agent === "commander_agent")?.message ??
-    "fusing five agent findings into patch-042";
-  const power =
-    agents.find((item) => item.agent === "power_orbit_agent")?.message ??
-    `eclipse recovery plan required in ${telemetry.eclipse}`;
-  const integrity =
-    agents.find((item) => item.agent === "radiation_integrity_agent")?.message ??
-    agentMessage("integrity", `checkpoint trust degraded, downlink via ${telemetry.groundLink}`);
+  const connectionStatus = useWorldStore((state) => state.connectionStatus);
+  const worldVersion = useWorldStore((state) => state.worldVersion);
+  const scenarioRunId = useWorldStore((state) => state.scenarioRunId);
+  const demoResetAt = useWorldStore((state) => state.demoResetAt);
 
   return (
-    <aside className="control-panel" aria-label="Orbital telemetry">
-      <div className="panel-header">
+    <aside className="left-rail" aria-label="Overview">
+      <div className="rail-brand">
+        <div className="brand-mark">OPS</div>
         <div>
-          <div className="eyebrow">OrbitOps / AKJA-01</div>
-          <h2 className="panel-title">Mission risk monitor</h2>
+          <h1>OrbitOps</h1>
+          <p>Orbital datacenter command</p>
         </div>
-        <div className="clock">{telemetry.clock}</div>
       </div>
 
+      <nav className="rail-nav" aria-label="Primary">
+        <button className="nav-item active" type="button">
+          <span className="nav-icon" aria-hidden="true" />
+          Overview
+        </button>
+      </nav>
+
+      <section className="rail-section">
+        <div className="section-header">
+          <div>
+            <div className="eyebrow">Mission</div>
+            <h2 className="panel-title">AKJA-01</h2>
+          </div>
+          <span className={`connection-pill ${connectionStatus}`}>
+            <span className="state-dot" />
+            {connectionStatus === "live" ? "live" : "local"}
+          </span>
+        </div>
+        <div className="clock">{telemetry.clock}</div>
+        <div className="mission-meta">
+          <span>orbit {telemetry.orbitPhase}</span>
+          <span>link {telemetry.groundLink}</span>
+          <span>{worldVersion ? `state v${worldVersion}` : scenarioRunId ?? "demo state"}</span>
+        </div>
+      </section>
+
+      <section className="rail-section">
+        <div className="eyebrow">Overview</div>
       <div className="metric-grid">
         <div className="metric">
           <div className="label">speed</div>
@@ -64,7 +78,10 @@ export default function TelemetryPanel() {
           <div className="metric-note">command loop</div>
         </div>
       </div>
+      </section>
 
+      <section className="rail-section">
+        <div className="eyebrow">Risk summary</div>
       <div className="risk-grid" aria-label="Mission critical values">
         <div className="risk-row is-warn">
           <span>Battery</span>
@@ -99,7 +116,10 @@ export default function TelemetryPanel() {
           <strong>{telemetry.downlink}</strong>
         </div>
       </div>
+      </section>
 
+      <section className="rail-section">
+        <div className="eyebrow">Scene controls</div>
       <div className="controls-row">
         <span className="label">time scale</span>
         <div className="speed-group" aria-label="Simulation speed">
@@ -122,21 +142,11 @@ export default function TelemetryPanel() {
           follow node
         </button>
       </div>
+      </section>
 
-      <ul className="agent-feed" aria-label="Commander feed">
-        <li>
-          <b>COMMANDER</b>
-          <span>{commander}</span>
-        </li>
-        <li>
-          <b>POWER</b>
-          <span>{power}</span>
-        </li>
-        <li>
-          <b>INTEGRITY</b>
-          <span>{integrity}</span>
-        </li>
-      </ul>
+      <div className="rail-footer">
+        <span>{demoResetAt ? "baseline reset" : "human approval required"}</span>
+      </div>
     </aside>
   );
 }

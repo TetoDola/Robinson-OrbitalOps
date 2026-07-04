@@ -219,12 +219,15 @@ function disposeObject(object: THREE.Object3D) {
 
 export function createOrbitScene(container: HTMLElement): OrbitScene {
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.05, 1000);
+  const initialRect = container.getBoundingClientRect();
+  const initialWidth = Math.max(1, initialRect.width);
+  const initialHeight = Math.max(1, initialRect.height);
+  const camera = new THREE.PerspectiveCamera(45, initialWidth / initialHeight, 0.05, 1000);
   camera.position.set(0, 1.8, 5.6);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.domElement.className = "scene-canvas";
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(initialWidth, initialHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -556,6 +559,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   function updateReticle() {
     satellite.getWorldPosition(satWorldPos);
     screenPos.copy(satWorldPos).project(camera);
+    const rect = container.getBoundingClientRect();
     const visible =
       screenPos.z > -1 &&
       screenPos.z < 1 &&
@@ -570,8 +574,8 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
       return;
     }
 
-    const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
-    const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
+    const x = rect.left + (screenPos.x * 0.5 + 0.5) * rect.width;
+    const y = rect.top + (-screenPos.y * 0.5 + 0.5) * rect.height;
     reticle.style.setProperty("--x", `${x}px`);
     reticle.style.setProperty("--y", `${y}px`);
   }
@@ -607,8 +611,9 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   }
 
   function resize() {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    const rect = container.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
@@ -660,6 +665,8 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   reticle.addEventListener("click", onReticleClick);
   window.addEventListener("resize", resize);
   window.addEventListener("keydown", onKeyDown);
+  const resizeObserver = new ResizeObserver(resize);
+  resizeObserver.observe(container);
 
   const unsubscribers = [
     useWorldStore.subscribe((state) => state.worldState, updateWorldState),
@@ -691,6 +698,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
     destroy: () => {
       renderer.setAnimationLoop(null);
       window.removeEventListener("resize", resize);
+      resizeObserver.disconnect();
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);

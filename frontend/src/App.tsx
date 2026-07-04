@@ -8,8 +8,6 @@ import {
   getWorldState,
 } from "./api/client";
 import { connectLiveSocket } from "./api/liveSocket";
-import CommandBar from "./components/CommandBar";
-import IncidentStrip from "./components/IncidentStrip";
 import MissionPatchPanel from "./components/MissionPatchPanel";
 import SceneViewport from "./components/SceneViewport";
 import TelemetryPanel from "./components/TelemetryPanel";
@@ -52,11 +50,9 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <SceneViewport />
-      <CommandBar />
       <TelemetryPanel />
+      <SceneViewport />
       <MissionPatchPanel />
-      <IncidentStrip />
     </div>
   );
 }

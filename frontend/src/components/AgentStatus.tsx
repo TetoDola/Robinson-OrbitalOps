@@ -63,7 +63,7 @@ export default function AgentStatus() {
   const visibleAgents = agents.length > 0 ? agents : fallbackAgents;
 
   return (
-    <section className="rack-section" aria-label="Independent agent status">
+    <section className="rail-section" aria-label="Independent agent status">
       <div className="eyebrow">agent status</div>
       <div className="agent-status-list">
         {visibleAgents.map((agent) => (
