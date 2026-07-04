@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import pytest
+from fastapi import HTTPException
+
 from app.db.models import WorldStateCurrent
 from app.routers.world_state import get_world_state
 from app.schemas.world import WorldStateResponse
@@ -31,6 +34,11 @@ class _Session:
         )
 
 
+class _EmptySession:
+    async def execute(self, _statement):
+        return _Result(None)
+
+
 def test_world_state_shape() -> None:
     response = asyncio.run(get_world_state(_Session()))
     assert isinstance(response, WorldStateResponse)
@@ -38,3 +46,11 @@ def test_world_state_shape() -> None:
     assert response.scenario_run_id == "phase-1-run"
     assert response.state["scenario"] == CANONICAL_WORLD_STATE["scenario"]
     assert response.updated_by == "seed"
+
+
+def test_world_state_missing_returns_503() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(get_world_state(_EmptySession()))
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "World state is not seeded."

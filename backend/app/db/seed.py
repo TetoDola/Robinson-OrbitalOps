@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.constants import AGENT_SEED_STATUS, CANONICAL_WORLD_STATE
 
-from .models import AgentStatus, WorldStateCurrent
+from .models import AgentStatus, AgentStatusEvent, WorldStateCurrent
 
 
 async def _upsert_world_state(session: AsyncSession) -> None:
@@ -46,6 +46,29 @@ async def _upsert_agent_statuses(session: AsyncSession) -> None:
                     message=status["message"],
                     updated_by="seed",
                     updated_at=now,
+                )
+            )
+
+        event_stmt = select(AgentStatusEvent).where(
+            AgentStatusEvent.scenario_run_id == "phase-1-run",
+            AgentStatusEvent.agent_name == status["agent"],
+            AgentStatusEvent.status == status["status"],
+            AgentStatusEvent.message == status["message"],
+        )
+        event_result = await session.execute(event_stmt)
+        existing_event = event_result.scalar_one_or_none()
+        if existing_event is None:
+            session.add(
+                AgentStatusEvent(
+                    scenario_run_id="phase-1-run",
+                    agent_name=status["agent"],
+                    display_name=status["display_name"],
+                    status=status["status"],
+                    phase=status["phase"],
+                    severity=status["severity"],
+                    message=status["message"],
+                    affected_assets=[],
+                    metadata_={"source": "seed"},
                 )
             )
 

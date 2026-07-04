@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.constants import CommandType
 from app.config import settings
+from app.db.models import AgentStatus, AgentStatusEvent
 
 
 def test_crusoe_model_is_exactly_expected_case() -> None:
@@ -26,3 +27,8 @@ def test_command_enum_contains_allowed_actions() -> None:
         "transfer_priority",
     }
     assert expected == {member.value for member in CommandType}
+
+
+def test_agent_status_projection_and_event_tables_are_distinct() -> None:
+    assert AgentStatus.__tablename__ == "agent_statuses"
+    assert AgentStatusEvent.__tablename__ == "agent_status_events"

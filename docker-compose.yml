@@ -35,7 +35,7 @@ services:
   orbitops-api:
     build: ./backend
     container_name: orbitops-api
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python", "-m", "app.services.bootstrap"]
     environment:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0

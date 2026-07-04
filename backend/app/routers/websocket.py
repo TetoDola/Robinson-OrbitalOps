@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.models import AgentStatus, WorldStateCurrent
-from app.db.session import get_session
+from app.db.session import session_context
 
 router = APIRouter()
 
@@ -31,16 +31,8 @@ async def _send_heartbeat(websocket: WebSocket, stop_event: asyncio.Event) -> No
             continue
 
 
-@router.websocket("/ws/live")
-async def ws_live(
-    websocket: WebSocket,
-    session: AsyncSession = Depends(get_session),
-) -> None:
-    await websocket.accept()
-    stop_event = asyncio.Event()
-    heartbeat_task = asyncio.create_task(_send_heartbeat(websocket, stop_event))
-
-    try:
+async def _send_seeded_snapshot(websocket: WebSocket) -> None:
+    async with session_context() as session:
         world_stmt = select(WorldStateCurrent).where(WorldStateCurrent.id.is_(True))
         world_result = await session.execute(world_stmt)
         world_state = world_result.scalar_one_or_none()
@@ -76,6 +68,15 @@ async def ws_live(
                 }
             )
 
+
+@router.websocket("/ws/live")
+async def ws_live(websocket: WebSocket) -> None:
+    await websocket.accept()
+    stop_event = asyncio.Event()
+    heartbeat_task = asyncio.create_task(_send_heartbeat(websocket, stop_event))
+
+    try:
+        await _send_seeded_snapshot(websocket)
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
@@ -83,3 +84,5 @@ async def ws_live(
     finally:
         stop_event.set()
         heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task

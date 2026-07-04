@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, String, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, DateTime, Numeric, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import BigInteger, Boolean
@@ -79,6 +79,35 @@ class AgentStatus(Base):
     linked_mission_patch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False, default="system")
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class AgentStatusEvent(Base):
+    __tablename__ = "agent_status_events"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    scenario_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    message: Mapped[str] = mapped_column(String(512), nullable=False)
+    current_task: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    progress: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    affected_assets: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    linked_finding_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    linked_incident_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    linked_mission_patch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,

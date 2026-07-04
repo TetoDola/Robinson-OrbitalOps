@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,10 @@ async def get_world_state(
     result = await session.execute(stmt)
     world_state = result.scalar_one_or_none()
     if world_state is None:
-        raise RuntimeError("World state is not seeded.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="World state is not seeded.",
+        )
 
     return WorldStateResponse(
         version=world_state.version,
