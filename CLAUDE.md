@@ -171,12 +171,11 @@ Pour remettre un océan visible : remplacer le matériau invisible par `MeshLamb
 ## Robinson-OrbitalOps (repo git)
 
 ### Fichiers
-- `frontend/satellite-orbit.html` — copie synchronisée de `Robinson/public/demo.html`
-- `frontend/geo/ne_50m_land.geojson` — même GeoJSON
+- Source unique de la démo : `public/demo.html` (+ `public/geo/ne_50m_land.geojson`).
+- L'ancien dossier `frontend/` (copie `satellite-orbit.html` + geo dupliqué) a été supprimé au nettoyage — plus de synchronisation à maintenir.
 
-### Différence chemin GeoJSON
-- Robinson (Next.js) : `fetch('/geo/ne_50m_land.geojson')`
-- OrbitalOps (standalone) : `fetch('geo/ne_50m_land.geojson')` (relatif)
+### Chemin GeoJSON
+- `fetch('geo/ne_50m_land.geojson')` — **relatif**, fonctionne à la fois servi par Next.js (`/demo.html`) et ouvert en `file://`.
 
 ### Commit récent
 ```
@@ -230,13 +229,12 @@ Robinson/
 - Natural Earth 1:10m pour plus de petites îles (fichier plus lourd)
 - Liseré/contour continents pour plus de séparation du fond
 - Ajuster grain globe : entre-deux suggéré `size: 0.06` / `LAT_STEPS: 40`
-- Synchroniser automatiquement `demo.html` ↔ `satellite-orbit.html` après chaque modif globe
 
 ---
 
 ## Rappels pour l’agent
 
-1. Modifier la scène 3D dans `public/demo.html` (Robinson), puis recopier vers `Robinson-OrbitalOps/frontend/satellite-orbit.html` si commit OrbitalOps demandé.
+1. Modifier la scène 3D dans `public/demo.html` — source unique, plus de copie `frontend/` à synchroniser.
 2. Ne pas casser l’UI ops (patch console, télémétrie, incidents) — seules les sections Three.js globe/lighting/satellites ont été refactorées.
 3. Garder l’esthétique **computational / premium / non photoréaliste**.
 4. Couleurs terre validées : `#33454a` sur fond `#e7e5db`, océan transparent.

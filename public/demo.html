@@ -1464,7 +1464,7 @@ function rasterizeMask(geojson) {
   buildContinentDots();
 }
 
-fetch('/geo/ne_50m_land.geojson')
+fetch('geo/ne_50m_land.geojson')
   .then((r) => r.json())
   .then(rasterizeMask)
   .catch((e) => console.warn('[globe] land data failed to load', e));
