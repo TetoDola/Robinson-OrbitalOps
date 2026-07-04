@@ -36,23 +36,30 @@ async def enqueue_outbox_event(
     return event
 
 
-async def publish_outbox_events_by_keys(idempotency_keys: list[str]) -> int:
+async def publish_outbox_events_by_keys(
+    idempotency_keys: list[str],
+    *,
+    session_factory=session_context,
+    publisher=publish_stream_event,
+) -> int:
     if not idempotency_keys:
         return 0
 
     published = 0
-    async with session_context() as session:
+    async with session_factory() as session:
         result = await session.execute(
             select(OutboxEvent)
             .where(
                 OutboxEvent.idempotency_key.in_(idempotency_keys),
                 OutboxEvent.status == "pending",
             )
-            .order_by(OutboxEvent.created_at.asc())
         )
-        events = list(result.scalars().all())
-        for event in events:
-            await publish_stream_event(
+        events_by_key = {event.idempotency_key: event for event in result.scalars().all()}
+        for key in idempotency_keys:
+            event = events_by_key.get(key)
+            if event is None:
+                continue
+            await publisher(
                 event.stream,
                 {
                     "type": event.event_type,
