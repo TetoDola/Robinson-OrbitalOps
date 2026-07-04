@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.constants import AGENT_SEED_STATUS, CANONICAL_WORLD_STATE, DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID
+from app.constants import AGENT_SEED_STATUS, DEMO_BASELINE_WORLD_STATE, DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID
 
 from .models import AgentStatus, AgentStatusEvent, ScenarioRun, WorldStateCurrent
 
@@ -22,7 +22,7 @@ async def _upsert_scenario_run(session: AsyncSession) -> None:
                 id=DEMO_SCENARIO_RUN_ID,
                 scenario_name=DEMO_SCENARIO_NAME,
                 status="running",
-                metadata_={"source": "seed"},
+                metadata_={"source": "seed", "next_tick": 0},
             )
         )
 
@@ -37,7 +37,7 @@ async def _upsert_world_state(session: AsyncSession) -> None:
                 id=True,
                 scenario_run_id=DEMO_SCENARIO_RUN_ID,
                 version=settings.world_state_seed_version,
-                state=CANONICAL_WORLD_STATE,
+                state=DEMO_BASELINE_WORLD_STATE,
                 updated_by="seed",
             )
         )

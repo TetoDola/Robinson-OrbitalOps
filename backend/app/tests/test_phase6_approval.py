@@ -57,7 +57,7 @@ class _FakeSession:
 
 
 def _pending_patch() -> MissionPatch:
-    state = build_simulated_state(0)
+    state = build_simulated_state(5)
     builders = [
         build_power_orbit_finding,
         build_workload_finding,

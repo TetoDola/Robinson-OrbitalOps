@@ -18,7 +18,7 @@ from app.simulator.state_machine import build_simulated_state
 
 
 def test_remaining_agents_emit_shared_finding_shape() -> None:
-    state = build_simulated_state(0)
+    state = build_simulated_state(5)
     builders = [
         build_workload_finding,
         build_thermal_finding,

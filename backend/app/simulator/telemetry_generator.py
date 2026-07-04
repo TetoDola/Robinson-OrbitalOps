@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from app.constants import DEMO_SCENARIO_RUN_ID, StreamName
-from app.db.models import TelemetryEvent
+from app.constants import DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID, StreamName
+from app.db.models import ScenarioRun, TelemetryEvent
 from app.db.session import session_context
 from app.services.bootstrap import wait_for_database_ready, wait_for_redis_ready
 from app.services.event_bus import publish_stream_event
@@ -63,13 +63,36 @@ async def run_simulator_tick(tick: int) -> dict:
     return event
 
 
+async def claim_next_simulator_tick() -> int:
+    async with session_context() as session:
+        scenario = await session.get(ScenarioRun, DEMO_SCENARIO_RUN_ID)
+        if scenario is None:
+            scenario = ScenarioRun(
+                id=DEMO_SCENARIO_RUN_ID,
+                scenario_name=DEMO_SCENARIO_NAME,
+                status="running",
+                metadata_={"next_tick": 0},
+            )
+            session.add(scenario)
+        tick = claim_next_tick_from_scenario(scenario)
+        await session.commit()
+        return tick
+
+
+def claim_next_tick_from_scenario(scenario: ScenarioRun) -> int:
+    metadata = dict(scenario.metadata_ or {})
+    tick = int(metadata.get("next_tick", 0))
+    metadata["next_tick"] = tick + 1
+    scenario.metadata_ = metadata
+    return tick
+
+
 async def run_forever() -> None:
     await wait_for_database_ready()
     await wait_for_redis_ready()
-    tick = 0
     while True:
+        tick = await claim_next_simulator_tick()
         await run_simulator_tick(tick)
-        tick += 1
         await asyncio.sleep(DEFAULT_TICK_SECONDS)
 
 

@@ -122,6 +122,92 @@ CANONICAL_WORLD_STATE = {
 }
 
 
+DEMO_BASELINE_WORLD_STATE = {
+    "scenario": "phase-1-demo",
+    "scenario_name": DEMO_SCENARIO_NAME,
+    "tick": 0,
+    "satellite": {
+        "id": "orbital-dc-01",
+        "lat": 0.0,
+        "lon": -122.4,
+        "alt_km": 550,
+        "velocity_km_s": 8.05,
+        "orbit_phase": "sunlight",
+        "time_to_eclipse_min": 31,
+        "ground_link": "connected",
+    },
+    "power": {
+        "battery_percent": 62,
+        "solar_kw": 11.4,
+        "compute_budget_kw": 7.5,
+        "cooling_power_kw": 1.5,
+        "comms_power_kw": 0.4,
+        "mode": "nominal",
+    },
+    "thermal": {
+        "highest_temp_c": 62,
+        "hotspot_node": "none",
+        "cooling_status": "nominal",
+    },
+    "radiation": {
+        "risk": "nominal",
+        "region": "clear-orbit",
+        "ecc_errors_last_5min": 12,
+        "xid_event": False,
+    },
+    "downlink": {
+        "window_open": True,
+        "capacity_gb": 180,
+        "used_gb": 0,
+        "time_remaining_min": 26,
+    },
+    "training": {
+        "job_id": "llm-train-042",
+        "status": "running",
+        "current_step": 184500,
+        "last_trusted_checkpoint": "ckpt-184500",
+        "latest_checkpoint": "ckpt-184500",
+        "latest_checkpoint_status": "trusted",
+        "loss_state": "finite",
+    },
+    "nodes": [
+        {
+            "id": "node-a",
+            "status": "healthy",
+            "gpu_util": 78,
+            "temp_c": 61,
+            "power_w": 520,
+            "rank_lag": 0.01,
+        },
+        {
+            "id": "node-b",
+            "status": "healthy",
+            "gpu_util": 12,
+            "temp_c": 58,
+            "ecc_errors": 12,
+            "xid_event": False,
+        },
+        {
+            "id": "node-c",
+            "status": "healthy",
+            "gpu_util": 5,
+            "temp_c": 60,
+            "vibration_score": 0.15,
+        },
+    ],
+    "agents": [
+        "workload_agent",
+        "thermal_physical_agent",
+        "power_orbit_agent",
+        "radiation_integrity_agent",
+        "checkpoint_downlink_agent",
+        "vibration_health_agent",
+        "commander_agent",
+    ],
+    "active_mission_patch": None,
+}
+
+
 AGENT_SEED_STATUS = [
     {
         "agent": "workload_agent",
