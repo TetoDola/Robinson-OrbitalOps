@@ -238,6 +238,7 @@ export const useWorldStore = create<WorldStore>()(
         if (event.type === "agent.status.updated") {
           const agent = event.payload as AgentStatusItem;
           const agents = state.agents.filter((item) => item.agent !== agent.agent);
+          const logStatus = agentEventStatus(agent);
           const shouldLog =
             agent.severity !== "INFO" ||
             !["monitor", "monitoring", "healthy"].includes(agent.phase) ||
@@ -252,7 +253,7 @@ export const useWorldStore = create<WorldStore>()(
                   event,
                   agent.display_name,
                   `${agent.phase}: ${agent.message}`,
-                  agent.status === "proposing" || agent.status === "analyzing" ? "running" : "info",
+                  logStatus,
                 )
               : state.workflowEvents,
             agentLogs: shouldLog
@@ -262,7 +263,7 @@ export const useWorldStore = create<WorldStore>()(
                   [agent.agent],
                   "Status updated",
                   `${agent.phase}: ${agent.message}`,
-                  agent.status === "proposing" || agent.status === "analyzing" ? "running" : "info",
+                  logStatus,
                   { dedupeKey: `${event.type}:${agent.agent}:${event.timestamp}` },
                 )
               : state.agentLogs,
@@ -300,7 +301,7 @@ export const useWorldStore = create<WorldStore>()(
           };
         }
 
-        if (event.type === "mission_patch.created") {
+        if (event.type === "mission_patch.created" || event.type === "mission_patch.updated") {
           const payload = event.payload as {
             id: string;
             status: string;
@@ -313,11 +314,12 @@ export const useWorldStore = create<WorldStore>()(
             rollback_plan?: Record<string, unknown>;
           };
           const patchAgents = patchPayloadAgents(payload, state);
+          const isUpdatedPatch = event.type === "mission_patch.updated";
           let agentLogs = agentLogEntry(
             state.agentLogs,
             event,
             ["commander_agent"],
-            "Mission patch generated",
+            isUpdatedPatch ? "Mission patch refreshed" : "Mission patch generated",
             payload.summary,
             "running",
             { dedupeKey: `${event.type}:${payload.id}:commander`, missionPatchId: payload.id },
@@ -326,8 +328,10 @@ export const useWorldStore = create<WorldStore>()(
             agentLogs,
             event,
             patchAgents,
-            "Patch handoff",
-            "Commander included this agent report in the approval package.",
+            isUpdatedPatch ? "Patch evidence refreshed" : "Patch handoff",
+            isUpdatedPatch
+              ? "Commander refreshed the approval package with current agent evidence."
+              : "Commander included this agent report in the approval package.",
             "running",
             { dedupeKey: `${event.type}:${payload.id}:handoff`, missionPatchId: payload.id },
           );
@@ -344,7 +348,13 @@ export const useWorldStore = create<WorldStore>()(
               approval_required: payload.approval_required,
             },
             patchMode: "pending",
-            workflowEvents: workflowEntry(state.workflowEvents, event, "Mission patch", payload.summary, "running"),
+            workflowEvents: workflowEntry(
+              state.workflowEvents,
+              event,
+              isUpdatedPatch ? "Mission patch refreshed" : "Mission patch",
+              payload.summary,
+              "running",
+            ),
             agentLogs,
             lastEvent: event,
             lastEventAt: event.timestamp,
@@ -653,6 +663,15 @@ function workflowEntry(
     },
     ...existing.filter((item) => item.id !== id),
   ].slice(0, 12);
+}
+
+function agentEventStatus(agent: AgentStatusItem): WorkflowEventItem["status"] {
+  const value = `${agent.status} ${agent.phase}`.toLowerCase();
+  if (value.includes("approval") || value.includes("blocked") || value.includes("failed")) return "blocked";
+  if (value.includes("propos") || value.includes("analy") || value.includes("detect") || value.includes("running")) {
+    return "running";
+  }
+  return "info";
 }
 
 const KNOWN_AGENTS = [

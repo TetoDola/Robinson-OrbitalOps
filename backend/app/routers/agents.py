@@ -29,6 +29,7 @@ from app.services.manual_simulation import inject_thermal_frame
 router = APIRouter()
 AGENT_INTERVAL_SECONDS = 120
 ACTIVE_AGENT_STATUSES = {"detecting", "analyzing", "explaining", "investigating", "planning", "proposing"}
+APPROVAL_AGENT_STATUSES = {"awaiting_approval"}
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -148,7 +149,9 @@ def _runtime_item(row: AgentStatus, now: datetime) -> AgentRuntimeItem:
     seconds_until = max(0, int((next_run_at - now).total_seconds()))
     age_seconds = max(0, int((now - last_run_at).total_seconds()))
     missed_runs = max(0, (age_seconds // AGENT_INTERVAL_SECONDS) - 1)
-    if row.status in ACTIVE_AGENT_STATUSES:
+    if row.status in APPROVAL_AGENT_STATUSES:
+        run_state = "awaiting_approval"
+    elif row.status in ACTIVE_AGENT_STATUSES:
         run_state = "running"
     elif missed_runs >= 2:
         run_state = "stale"

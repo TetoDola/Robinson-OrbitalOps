@@ -148,13 +148,16 @@ def _message_content(response: dict[str, Any] | None, *, include_reasoning: bool
     if not choices:
         return ""
     content = (choices[0].get("message") or {}).get("content")
-    if isinstance(content, str):
+    if isinstance(content, str) and content.strip():
         return content
     if isinstance(content, list):
-        return "\n".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+        text = "\n".join(str(part.get("text", "")) for part in content if isinstance(part, dict)).strip()
+        if text:
+            return text
     if include_reasoning:
-        reasoning = (choices[0].get("message") or {}).get("reasoning")
-        if isinstance(reasoning, str):
+        message = choices[0].get("message") or {}
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning.strip():
             return reasoning
     return ""
 

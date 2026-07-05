@@ -25,6 +25,17 @@ interface SignalRow {
   tone?: Tone;
 }
 
+interface PatchEvidenceItem {
+  agent?: string;
+  finding?: string;
+  severity?: string;
+  confidence?: number;
+  affected_assets?: string[];
+  evidence?: string[];
+  risk?: string | null;
+  recommended_actions?: string[];
+}
+
 const fallbackAgents: AgentStatusItem[] = [
   {
     agent: "workload_agent",
@@ -78,9 +89,11 @@ const detectorScope: Record<string, string> = {
   commander_agent: "Open findings, affected assets, safety validator output, patch status, approval boundary.",
 };
 
-function workStateClass(agent: AgentStatusItem, missionPatchActive: boolean): string {
+function workStateClass(agent: AgentStatusItem, missionPatchStatus?: string | null): string {
   const value = `${agent.status} ${agent.phase}`.toLowerCase();
-  if (missionPatchActive && agent.agent === "commander_agent") return "status-orange";
+  if (agent.agent === "commander_agent" && missionPatchStatus === "verified") return "status-green";
+  if (agent.agent === "commander_agent" && missionPatchStatus === "rejected") return "status-red";
+  if (agent.agent === "commander_agent" && isActivePatchStatus(missionPatchStatus)) return "status-orange";
   if (value.includes("monitor") || value.includes("healthy")) return "status-green";
   if (value.includes("analy") || value.includes("detect") || value.includes("running")) return "status-cyan";
   if (value.includes("propos") || value.includes("planning") || value.includes("approval")) return "status-orange";
@@ -88,11 +101,19 @@ function workStateClass(agent: AgentStatusItem, missionPatchActive: boolean): st
   return "status-cyan";
 }
 
-function workStateLabel(agent: AgentStatusItem, missionPatchActive: boolean): string {
-  if (missionPatchActive && agent.agent === "commander_agent") return "patch ready";
+function workStateLabel(agent: AgentStatusItem, missionPatchStatus?: string | null): string {
+  if (agent.agent === "commander_agent" && missionPatchStatus === "pending_approval") return "awaiting approval";
+  if (agent.agent === "commander_agent" && missionPatchStatus === "approved") return "approved";
+  if (agent.agent === "commander_agent" && missionPatchStatus === "executing") return "executing";
+  if (agent.agent === "commander_agent" && missionPatchStatus === "verified") return "verified";
+  if (agent.agent === "commander_agent" && missionPatchStatus === "rejected") return "rejected";
   const value = agent.status || agent.phase;
   if (value === "healthy" || value === "scheduled") return "monitoring";
   return humanize(value);
+}
+
+function isActivePatchStatus(status: string | null | undefined): boolean {
+  return ["pending_approval", "approved", "executing"].includes(status ?? "");
 }
 
 function toneClass(tone: Tone | undefined): string {
@@ -167,14 +188,70 @@ function actionTarget(action: MissionPatchAction): string {
   return typeof target === "string" ? target : "mission scope";
 }
 
+function commandDescriptor(action: MissionPatchAction): string {
+  const target = actionTarget(action);
+  if (target === "mission scope" && action.type === "transfer_priority") return "mission queue prioritization";
+  return target;
+}
+
 function relatedPatchActions(
   agent: AgentStatusItem,
-  latestFinding: AgentFinding | undefined,
+  history: AgentFinding[],
   patchActions: MissionPatchAction[],
+  missionPatch: MissionPatch | null,
 ): MissionPatchAction[] {
   if (agent.agent === "commander_agent") return patchActions;
-  if (!latestFinding) return [];
-  return patchActions.filter((action) => latestFinding.recommended_actions.includes(String(action.type)));
+  const representedInPatch = patchEvidenceForAgent(agent, missionPatch).length > 0 || agent.linked_mission_patch_id === missionPatch?.id;
+  const recommendedActions = new Set(
+    history.flatMap((finding) => finding.recommended_actions).concat(representedInPatch ? fallbackActionsForAgent(agent.agent) : []),
+  );
+  if (!recommendedActions.size) return [];
+  return patchActions.filter((action) => recommendedActions.has(String(action.type)));
+}
+
+function fallbackActionsForAgent(agentName: string): string[] {
+  const map: Record<string, string[]> = {
+    workload_agent: ["snapshot_evidence", "run_health_check", "pause_job", "rollback_training"],
+    thermal_physical_agent: ["mark_node_suspect", "set_gpu_power_limit", "snapshot_evidence", "run_health_check"],
+    power_orbit_agent: ["set_gpu_power_limit", "increase_checkpoint_frequency", "transfer_priority"],
+    radiation_integrity_agent: ["mark_checkpoint_suspect", "rollback_training", "cordon_node", "run_health_check"],
+    checkpoint_downlink_agent: ["transfer_priority", "snapshot_evidence"],
+    vibration_health_agent: ["snapshot_evidence", "run_health_check", "mark_node_suspect"],
+  };
+  return map[agentName] ?? [];
+}
+
+function patchEvidenceItems(missionPatch: MissionPatch | null): PatchEvidenceItem[] {
+  if (!missionPatch?.evidence) return [];
+  const values = Array.isArray(missionPatch.evidence) ? missionPatch.evidence : [missionPatch.evidence];
+  return values
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      agent: typeof item.agent === "string" ? item.agent : undefined,
+      finding: typeof item.finding === "string" ? item.finding : undefined,
+      severity: typeof item.severity === "string" ? item.severity : undefined,
+      confidence: typeof item.confidence === "number" ? item.confidence : undefined,
+      affected_assets: Array.isArray(item.affected_assets)
+        ? item.affected_assets.filter((value): value is string => typeof value === "string")
+        : undefined,
+      evidence: Array.isArray(item.evidence)
+        ? item.evidence.filter((value): value is string => typeof value === "string")
+        : undefined,
+      risk: typeof item.risk === "string" ? item.risk : undefined,
+      recommended_actions: Array.isArray(item.recommended_actions)
+        ? item.recommended_actions.filter((value): value is string => typeof value === "string")
+        : undefined,
+    }));
+}
+
+function patchEvidenceForAgent(agent: AgentStatusItem, missionPatch: MissionPatch | null): PatchEvidenceItem[] {
+  const items = patchEvidenceItems(missionPatch);
+  if (agent.agent === "commander_agent") return items;
+  return items.filter((item) => item.agent === agent.agent);
+}
+
+function uniqueStrings(values: Array<string | undefined | null>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
 }
 
 function commandMatchesAgent(command: Command, finding: AgentFinding | undefined): boolean {
@@ -267,6 +344,58 @@ function assetsFromSignals(signalRows: SignalRow[]): string {
   return signalRows.map((row) => `${row.label}: ${row.value}`).join(" | ");
 }
 
+function approvalProblemTitle(
+  agent: AgentStatusItem,
+  latestFinding: AgentFinding | undefined,
+  evidenceItems: PatchEvidenceItem[],
+  missionPatch: MissionPatch | null,
+  thermalInput: ThermalVisualInput | null,
+): string {
+  if (latestFinding?.finding) return latestFinding.finding;
+  if (evidenceItems[0]?.finding) return evidenceItems[0].finding;
+  if (thermalInput?.model_result?.summary) return thermalInput.model_result.summary;
+  if (agent.agent === "commander_agent" && missionPatch?.summary) return missionPatch.summary;
+  return "No approval-required issue is linked to this agent.";
+}
+
+function approvalRiskText(
+  latestFinding: AgentFinding | undefined,
+  evidenceItems: PatchEvidenceItem[],
+  missionPatch: MissionPatch | null,
+  thermalInput: ThermalVisualInput | null,
+): string {
+  return (
+    latestFinding?.risk ||
+    evidenceItems.find((item) => item.risk)?.risk ||
+    thermalInput?.model_result?.risk ||
+    missionPatch?.summary ||
+    "No elevated operational risk is currently attached to this approval."
+  );
+}
+
+function approvalEvidenceList(
+  latestFinding: AgentFinding | undefined,
+  evidenceItems: PatchEvidenceItem[],
+  thermalInput: ThermalVisualInput | null,
+): string[] {
+  const patchEvidence = evidenceItems.flatMap((item) => item.evidence ?? []);
+  const modelEvidence = thermalInput?.model_result?.evidence ?? [];
+  return uniqueStrings([...(latestFinding?.evidence ?? []), ...patchEvidence, ...modelEvidence]).slice(0, 6);
+}
+
+function approvalAssetList(
+  latestFinding: AgentFinding | undefined,
+  evidenceItems: PatchEvidenceItem[],
+  thermalInput: ThermalVisualInput | null,
+): string[] {
+  return uniqueStrings([
+    ...(latestFinding?.affected_assets ?? []),
+    ...evidenceItems.flatMap((item) => item.affected_assets ?? []),
+    ...(thermalInput?.model_result?.affected_assets ?? []),
+    thermalInput?.asset_id,
+  ]);
+}
+
 interface AgentDetailModalProps {
   agent: AgentStatusItem;
   latestFinding?: AgentFinding;
@@ -317,10 +446,25 @@ function AgentDetailModal({
   const assets = latestFinding?.affected_assets?.length ? latestFinding.affected_assets : [];
   const signalRows = buildSignalRows(agent.agent, worldState, openFindingCount, relatedCommands.length || commandCount);
   const nextRunSeconds = secondsUntil(runtime?.next_run_at, nowMs);
-  const patchActive = Boolean(linkedPatchId || worldState?.active_mission_patch);
-  const canDecidePatch = missionPatch?.status === "pending_approval" && approvalActions.length > 0;
   const thermalInput: ThermalVisualInput | null =
     agent.agent === "thermal_physical_agent" ? (worldState?.thermal.latest_visual_input ?? null) : null;
+  const patchStatus = missionPatch?.status ?? null;
+  const evidenceItems = patchEvidenceForAgent(agent, missionPatch);
+  const approvalTitle = approvalProblemTitle(agent, latestFinding, evidenceItems, missionPatch, thermalInput);
+  const approvalRisk = approvalRiskText(latestFinding, evidenceItems, missionPatch, thermalInput);
+  const approvalEvidence = approvalEvidenceList(latestFinding, evidenceItems, thermalInput);
+  const approvalAssets = approvalAssetList(latestFinding, evidenceItems, thermalInput);
+  const patchRelevantToAgent =
+    agent.agent === "commander_agent" ||
+    evidenceItems.length > 0 ||
+    approvalActions.length > 0 ||
+    agent.linked_mission_patch_id === missionPatch?.id;
+  const commandSet =
+    patchRelevantToAgent && approvalActions.length > 0 ? approvalActions : patchActions;
+  const approvalCommandCount = commandSet.length;
+  const patchCommandCount = patchActions.length;
+  const canDecidePatch = missionPatch?.status === "pending_approval" && patchCommandCount > 0;
+  const commandContext = approvalActions.length === 0 ? "Mission Patch command set" : "Commands matching this agent context";
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -357,9 +501,9 @@ function AgentDetailModal({
             <div className="section-header compact">
               <div>
                 <div className="eyebrow">detector state</div>
-                <strong>{workStateLabel(agent, patchActive)}</strong>
+                <strong>{workStateLabel(agent, patchStatus)}</strong>
               </div>
-              <b className={workStateClass(agent, patchActive)}>{workStateLabel(agent, patchActive)}</b>
+              <b className={workStateClass(agent, patchStatus)}>{workStateLabel(agent, patchStatus)}</b>
             </div>
             <p>{agent.message}</p>
             <div className="agent-detail-metrics">
@@ -443,29 +587,77 @@ function AgentDetailModal({
             </ul>
           </section>
 
-          {missionPatch && approvalActions.length > 0 ? (
-            <section className="agent-modal-section agent-approval-section">
+          {missionPatch && patchRelevantToAgent && patchCommandCount > 0 ? (
+            <section className="agent-modal-section span-2 agent-approval-section">
               <div className="section-header compact">
                 <div>
-                  <div className="eyebrow">approval queue</div>
-                  <strong>{humanize(missionPatch.status)}</strong>
+                  <div className="eyebrow">approval review</div>
+                  <strong>{approvalTitle}</strong>
                 </div>
                 <b className={canDecidePatch ? "status-orange" : "status-cyan"}>
                   {canDecidePatch ? "needs approval" : humanize(missionPatch.status)}
                 </b>
               </div>
+              <div className="approval-review-grid">
+                <div className="approval-problem">
+                  <span className="label">unsafe issue</span>
+                  <p className="approval-issue">{approvalTitle}</p>
+                  <span className="label">risk if ignored</span>
+                  <p>{approvalRisk}</p>
+                  <div className="approval-chip-row">
+                    {(approvalAssets.length ? approvalAssets : ["mission scope"]).map((asset) => (
+                      <span key={asset}>{asset}</span>
+                    ))}
+                  </div>
+                  <div className="approval-evidence">
+                    <span className="label">evidence</span>
+                    <ul>
+                      {(approvalEvidence.length ? approvalEvidence : ["No evidence packet attached to this agent."]).map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                <div className="approval-visual">
+                  <span className="label">{thermalInput ? "visual evidence" : "evidence source"}</span>
+                  {thermalInput ? (
+                    <>
+                      <img alt={`Thermal approval evidence for ${thermalInput.asset_id}`} src={thermalInput.image_data_url} />
+                      <small>
+                        {thermalInput.model_result?.model ?? "deterministic telemetry"} | {humanize(thermalInput.analysis_status)}
+                      </small>
+                      {thermalInput.model_result?.summary ? <p>{thermalInput.model_result.summary}</p> : null}
+                    </>
+                  ) : (
+                    <div className="approval-no-visual">
+                      This approval is based on telemetry, agent findings, and Commander validation.
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="approval-command-header">
+                <span className="label">commands awaiting approval</span>
+                <strong>
+                  {approvalCommandCount} command{approvalCommandCount === 1 ? "" : "s"}
+                </strong>
+              </div>
+              {approvalActions.length === 0 ? (
+                <small className="agent-approval-subnote">
+                  {commandContext}: this panel always reflects the full validated Mission Patch scope.
+                </small>
+              ) : null}
               <ol className="agent-command-approval-list">
-                {approvalActions.map((action) => (
-                  <li key={`${action.type}-${actionTarget(action)}`}>
+                {commandSet.map((action) => (
+                  <li key={`${action.type}-${commandDescriptor(action)}`}>
                     <span>
                       <strong>{actionLabel(action)}</strong>
-                      {actionTarget(action)}
+                      <small>{commandDescriptor(action)}</small>
                     </span>
                   </li>
                 ))}
               </ol>
               <div className="agent-approval-note">
-                These controls are part of one Mission Patch. Approval runs the full validated patch.
+                Approval is only needed because this detector raised an unsafe condition. Approving here executes the entire validated Mission Patch ({patchCommandCount} commands total), not just this one command group.
               </div>
               <div className="agent-approval-buttons">
                 <button disabled={!canDecidePatch || approvalBusy} onClick={() => void onApprovePatch()} type="button">
@@ -478,7 +670,7 @@ function AgentDetailModal({
             </section>
           ) : null}
 
-          {thermalInput ? (
+          {thermalInput && approvalActions.length === 0 ? (
             <section className="agent-modal-section thermal-frame-section">
               <div className="section-header compact">
                 <div>
@@ -571,7 +763,7 @@ function AgentDetailModal({
                 <li>
                   <time>{formatDate(agent.updated_at)}</time>
                   <span>{agent.message}</span>
-                  <b className={workStateClass(agent, patchActive)}>{workStateLabel(agent, patchActive)}</b>
+                  <b className={workStateClass(agent, patchStatus)}>{workStateLabel(agent, patchStatus)}</b>
                 </li>
               ) : null}
             </ol>
@@ -617,9 +809,9 @@ export default function AgentStatus() {
     : undefined;
   const relatedCommands = commands.filter((command) => commandMatchesAgent(command, latestFinding));
   const patchActions = missionPatch?.actions ?? [];
-  const approvalActions = selectedAgent ? relatedPatchActions(selectedAgent, latestFinding, patchActions) : [];
+  const approvalActions = selectedAgent ? relatedPatchActions(selectedAgent, selectedHistory, patchActions, missionPatch) : [];
   const openFindingCount = agentFindings.filter((finding) => finding.status === "open").length;
-  const missionPatchActive = Boolean(missionPatch);
+  const missionPatchStatus = missionPatch?.status ?? null;
 
   async function approveFromAgent() {
     if (!missionPatch || approvalBusy) return;
@@ -669,7 +861,7 @@ export default function AgentStatus() {
                 {agent.message}
                 <small>next run {nextRun}</small>
               </span>
-              <b className={workStateClass(agent, missionPatchActive)}>{workStateLabel(agent, missionPatchActive)}</b>
+              <b className={workStateClass(agent, missionPatchStatus)}>{workStateLabel(agent, missionPatchStatus)}</b>
             </button>
           );
         })}

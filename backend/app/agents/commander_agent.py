@@ -98,6 +98,7 @@ async def build_phase3_patch() -> MissionPatch | None:
 
 async def build_commander_patch() -> MissionPatch | None:
     created_patch = False
+    updated_patch: MissionPatch | None = None
     async with session_context() as session:
         world_state_row = await _current_world_state(session)
         world_state = world_state_row.state if world_state_row is not None else CANONICAL_WORLD_STATE
@@ -129,6 +130,28 @@ async def build_commander_patch() -> MissionPatch | None:
         existing_patch = await _active_patch_for_incident(session, incident.id)
         if existing_patch is not None:
             if existing_patch.status == "pending_approval":
+                actions = build_mission_patch_actions(world_state, findings)
+                safety = validate_mission_patch(actions, world_state)
+                if not safety.allowed:
+                    await _record_blocked_commander_status(session, safety)
+                    await session.commit()
+                    return existing_patch
+
+                incident.status = "pending_approval"
+                incident.updated_at = datetime.now(timezone.utc)
+                existing_patch.severity = severity
+                existing_patch.summary = await polish_mission_patch_summary(
+                    _summary(findings),
+                    {"world_state": world_state, "findings": findings},
+                )
+                existing_patch.evidence = [_evidence_item(finding) for finding in findings]
+                existing_patch.actions = actions
+                existing_patch.rollback_plan = {
+                    "if_verification_fails": ["pause_job", "snapshot_evidence", "resume_from_ground_confirmed_checkpoint"]
+                }
+                existing_patch.approval_required = safety.approval_required
+                existing_patch.updated_at = datetime.now(timezone.utc)
+                updated_patch = existing_patch
                 await emit_agent_status(
                     session,
                     agent_name="commander_agent",
@@ -139,7 +162,21 @@ async def build_commander_patch() -> MissionPatch | None:
                     linked_incident_id=incident.id,
                     linked_mission_patch_id=existing_patch.id,
                 )
+                for agent_name in sorted({finding.agent_name for finding in findings}):
+                    await emit_agent_status(
+                        session,
+                        agent_name=agent_name,
+                        status="awaiting_approval",
+                        phase="approve",
+                        severity=severity,
+                        message="Related recommendation is waiting for Mission Patch approval.",
+                        linked_incident_id=incident.id,
+                        linked_mission_patch_id=existing_patch.id,
+                    )
             await session.commit()
+            if updated_patch is not None:
+                await session.refresh(updated_patch)
+                await _publish_patch_event(updated_patch, event_type="mission_patch.updated")
             return existing_patch
 
         actions = build_mission_patch_actions(world_state, findings)
@@ -191,7 +228,7 @@ async def build_commander_patch() -> MissionPatch | None:
         await session.refresh(patch)
 
     if created_patch:
-        await _publish_patch_created(patch)
+        await _publish_patch_event(patch, event_type="mission_patch.created")
     return patch
 
 
@@ -265,23 +302,26 @@ async def _record_blocked_commander_status(session, safety: SafetyResult) -> Non
     )
 
 
-async def _publish_patch_created(patch: MissionPatch) -> None:
+async def _publish_patch_event(patch: MissionPatch, *, event_type: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     payload = {
         "id": patch.id,
         "status": patch.status,
         "severity": patch.severity,
         "summary": patch.summary,
+        "incident_id": patch.incident_id,
+        "evidence": patch.evidence,
         "actions": patch.actions,
+        "rollback_plan": patch.rollback_plan,
         "approval_required": patch.approval_required,
     }
     await publish_stream_event(
         StreamName.commander_patches.value,
-        {"type": "mission_patch.created", "timestamp": now, "payload": payload},
+        {"type": event_type, "timestamp": now, "payload": payload},
     )
     await publish_stream_event(
         StreamName.ui_events.value,
-        {"type": "mission_patch.created", "timestamp": now, "payload": payload},
+        {"type": event_type, "timestamp": now, "payload": payload},
     )
 
 
@@ -300,7 +340,10 @@ def _evidence_item(finding: AgentFinding) -> dict[str, Any]:
         "finding": finding.finding,
         "severity": finding.severity,
         "confidence": float(finding.confidence),
+        "affected_assets": finding.affected_assets,
         "evidence": finding.evidence,
+        "risk": finding.risk,
+        "recommended_actions": finding.recommended_actions,
     }
 
 

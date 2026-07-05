@@ -386,6 +386,21 @@ export type MissionPatchCreatedEvent = LiveEventBase<
   }
 >;
 
+export type MissionPatchUpdatedEvent = LiveEventBase<
+  "mission_patch.updated",
+  {
+    id: string;
+    status: string;
+    severity: Severity;
+    summary: string;
+    actions: MissionPatchAction[];
+    approval_required: boolean;
+    incident_id?: string | null;
+    evidence?: Record<string, unknown> | Record<string, unknown>[];
+    rollback_plan?: Record<string, unknown>;
+  }
+>;
+
 export type MissionPatchApprovedEvent = LiveEventBase<
   "mission_patch.approved",
   {
@@ -462,6 +477,7 @@ export type BackendLiveEvent =
   | AgentStatusUpdatedEvent
   | AgentFindingCreatedEvent
   | MissionPatchCreatedEvent
+  | MissionPatchUpdatedEvent
   | MissionPatchApprovedEvent
   | MissionPatchExecutingEvent
   | MissionPatchRejectedEvent
