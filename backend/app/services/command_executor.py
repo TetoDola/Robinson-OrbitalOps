@@ -147,7 +147,7 @@ async def execute_commands_in_session(
 
         state_patch = apply_action_to_state(command.input)
         if state_patch:
-            await state_writer(session, state_patch, updated_by="orbitops-executor", reason=command.action_type)
+            await state_writer(session, state_patch, updated_by="robinson-executor", reason=command.action_type)
         command.status = "succeeded"
         command.result = {"verified": True, "message": f"{command.action_type} completed"}
         command.updated_at = datetime.now(timezone.utc)
@@ -205,7 +205,7 @@ async def execute_commands_in_session(
                 else "Related controls verified; monitoring baseline."
             )
             agent_row.linked_mission_patch_id = None
-            agent_row.updated_by = "orbitops-executor"
+            agent_row.updated_by = "robinson-executor"
             agent_row.updated_at = datetime.now(timezone.utc)
         if mission_patch.incident_id:
             incident = await session.get(Incident, mission_patch.incident_id)
@@ -229,7 +229,7 @@ async def execute_commands_in_session(
                 },
                 "training": {"status": "running_verified"},
             },
-            updated_by="orbitops-executor",
+            updated_by="robinson-executor",
             reason="verification.completed",
         )
         outbox_keys.extend(
@@ -269,7 +269,7 @@ async def run_forever() -> None:
         async with get_redis() as redis:
             messages = await redis.xreadgroup(
                 "executor",
-                "orbitops-executor-1",
+                "robinson-executor-1",
                 {StreamName.command_requests.value: ">"},
                 count=1,
                 block=1000,

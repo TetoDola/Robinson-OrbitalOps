@@ -46,7 +46,7 @@ async def run_simulator_tick(tick: int) -> dict:
         world_state = await write_world_state(
             session,
             state,
-            updated_by="orbitops-simulator",
+            updated_by="robinson-simulator",
             reason="simulator_tick",
         )
         local_event: dict | None = None
@@ -54,7 +54,7 @@ async def run_simulator_tick(tick: int) -> dict:
             world_state = await write_world_state(
                 session,
                 gpu_world_state_patch(local_snapshot),
-                updated_by="orbitops-local-gpu",
+                updated_by="robinson-local-gpu",
                 reason="local_gpu_telemetry",
             )
             local_event = build_local_gpu_event(
@@ -121,7 +121,7 @@ async def run_local_gpu_telemetry_tick() -> dict | None:
         world_state = await write_world_state(
             session,
             gpu_world_state_patch(local_snapshot),
-            updated_by="orbitops-local-gpu",
+            updated_by="robinson-local-gpu",
             reason="local_gpu_telemetry",
         )
         local_event = build_local_gpu_event(local_snapshot, world_state_version=world_state.version)

@@ -133,7 +133,7 @@ export default function OperatorChatbot() {
           <header className="operator-chat-header">
             <div>
               <span className="eyebrow">operator chat</span>
-              <strong>OrbitOps assistant</strong>
+              <strong>Robinson assistant</strong>
               <small>{statusLabel}</small>
             </div>
             <button className="operator-chat-close" type="button" aria-label="Close operator chat" onClick={() => setIsOpen(false)}>
@@ -201,7 +201,7 @@ export default function OperatorChatbot() {
           >
             <textarea
               ref={inputRef}
-              aria-label="Message OrbitOps assistant"
+              aria-label="Message Robinson assistant"
               placeholder="Ask a mission question..."
               rows={2}
               value={draft}

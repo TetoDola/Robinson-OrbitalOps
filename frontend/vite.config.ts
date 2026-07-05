@@ -10,11 +10,11 @@ const wsTarget = process.env.VITE_PROXY_WS_TARGET ?? "ws://localhost:8000";
 // reject responses return declarative local_tool_calls and this dev-server
 // endpoint executes them on the host. The MSI WMI ACPI write needs elevation,
 // so the actual msi-fan-cli calls live in pre-registered elevated Scheduled
-// Tasks ("OrbitOps Cooler Boost On/Off"); schtasks /run triggers them from
+// Tasks ("Robinson Cooler Boost On/Off"); schtasks /run triggers them from
 // this non-elevated process without a UAC prompt.
 const COOLER_BOOST_TASKS: Record<string, string> = {
-  on: "OrbitOps Cooler Boost On",
-  off: "OrbitOps Cooler Boost Off",
+  on: "Robinson Cooler Boost On",
+  off: "Robinson Cooler Boost Off",
 };
 
 function localCoolerBoostPlugin(): Plugin {

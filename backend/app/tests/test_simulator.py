@@ -152,7 +152,7 @@ def test_run_simulator_tick_emits_local_gpu_telemetry_and_commits_once(monkeypat
     assert result["world_state_version"] == 2
     assert session.commits == 1
     assert len(written_patches) == 2
-    assert written_patches[1][1] == "orbitops-local-gpu"
+    assert written_patches[1][1] == "robinson-local-gpu"
     assert written_patches[1][2] == "local_gpu_telemetry"
     assert "nodes" not in written_patches[1][0]
     assert "local_gpu" in written_patches[1][0]

@@ -152,9 +152,9 @@ async def fetch_radiation_environment() -> dict[str, Any]:
     """Return live NOAA/SWPC drivers with mock fallback and a short cache."""
 
     global _environment_cache
-    mode = settings.orbitops_radiation_source.lower()
+    mode = settings.robinson_radiation_source.lower()
     now = time.monotonic()
-    cache_seconds = max(1, settings.orbitops_radiation_cache_seconds)
+    cache_seconds = max(1, settings.robinson_radiation_cache_seconds)
     if (
         _environment_cache
         and _environment_cache["mode"] == mode
@@ -167,7 +167,7 @@ async def fetch_radiation_environment() -> dict[str, Any]:
         _environment_cache = {"mode": mode, "created_at": now, "environment": environment}
         return deepcopy(environment)
 
-    async with httpx.AsyncClient(timeout=settings.orbitops_radiation_timeout_seconds) as client:
+    async with httpx.AsyncClient(timeout=settings.robinson_radiation_timeout_seconds) as client:
         results = await asyncio.gather(
             *(_fetch_live_source(client, name, url) for name, url in NOAA_ENDPOINTS.items()),
             return_exceptions=True,
@@ -485,7 +485,7 @@ def compute_radiation_risk(world_state: dict[str, Any], generated_at: str, envir
             "mode": "latest_poes_style_particle_flux_asset",
             "generatedAt": _now_iso(),
             "assetCount": 1,
-            "refreshCadenceSeconds": max(1, settings.orbitops_radiation_cache_seconds),
+            "refreshCadenceSeconds": max(1, settings.robinson_radiation_cache_seconds),
             "particleProduct": {
                 "style": "NOAA POES MEPED cylindrical particle flux",
                 "channel": "P6",
@@ -497,7 +497,7 @@ def compute_radiation_risk(world_state: dict[str, Any], generated_at: str, envir
             },
             "liveImageAvailability": {
                 "exactPoesCylindricalImageFeed": False,
-                "reason": "NOAA/NCEI POES cylindrical maps are archive/browse products; OrbitOps generates a latest POES-style asset from NOAA/SWPC drivers.",
+                "reason": "NOAA/NCEI POES cylindrical maps are archive/browse products; Robinson generates a latest POES-style asset from NOAA/SWPC drivers.",
             },
             "note": "Backend-modeled POES-style particle flux overlay from live or fallback space-weather drivers.",
             "latestAsset": frame,

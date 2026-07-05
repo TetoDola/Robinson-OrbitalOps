@@ -1,4 +1,4 @@
-"""Per-agent prompt registry for OrbitOps LLM calls.
+"""Per-agent prompt registry for Robinson LLM calls.
 
 One place that says, for every agent: what it watches, which hypotheses it
 must test, what evidence quality is required, and when it escalates to the
@@ -48,7 +48,7 @@ class AgentPromptSpec:
     def system_prompt(self) -> str:
         return "\n".join(
             [
-                f"You are the {self.display_name} ({self.agent}) for OrbitOps, an orbital GPU data center "
+                f"You are the {self.display_name} ({self.agent}) for Robinson, an orbital GPU data center "
                 "running a safety-critical distributed training job.",
                 f"Mission: {self.mission}",
                 "You watch exactly these signals:",
@@ -242,7 +242,7 @@ COMMANDER_AGENT_NAME = "commander_agent"
 
 COMMANDER_SYSTEM_PROMPT = "\n".join(
     [
-        "You are the Commander Agent for OrbitOps, an orbital GPU data center running a safety-critical "
+        "You are the Commander Agent for Robinson, an orbital GPU data center running a safety-critical "
         "distributed training job.",
         "Mission: fuse open findings from independent domain agents into one coherent incident and one "
         "validated mission patch a human operator can approve.",
@@ -290,7 +290,7 @@ def agent_analysis_system_prompt(agent_name: str) -> str:
         return spec.system_prompt()
     return "\n".join(
         [
-            f"You are the {agent_name} telemetry analysis sub-agent for OrbitOps, an orbital GPU data center.",
+            f"You are the {agent_name} telemetry analysis sub-agent for Robinson, an orbital GPU data center.",
             "Analyze the provided runtime data and deterministic finding for your domain.",
             AGENT_ANALYSIS_OUTPUT_CONTRACT,
             SAFETY_BOUNDARY,

@@ -2,17 +2,17 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: orbitops
-      POSTGRES_PASSWORD: orbitops
-      POSTGRES_DB: orbitops
+      POSTGRES_USER: robinson
+      POSTGRES_PASSWORD: robinson
+      POSTGRES_DB: robinson
     ports:
       - "5432:5432"
     volumes:
-      - orbitops_pg:/var/lib/postgresql/data
+      - robinson_pg:/var/lib/postgresql/data
     healthcheck:
       test:
         - CMD-SHELL
-        - "pg_isready -U orbitops -d orbitops"
+        - "pg_isready -U robinson -d robinson"
       interval: 5s
       timeout: 5s
       retries: 20
@@ -32,23 +32,23 @@ services:
       retries: 20
       start_period: 5s
 
-  orbitops-api:
+  robinson-api:
     build: ./backend
-    container_name: orbitops-api
+    container_name: robinson-api
     command: ["python", "-m", "app.services.bootstrap"]
     env_file:
       - ./backend/.env
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
       CRUSOE_MODEL: ${CRUSOE_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_MULTIMODAL_MODEL: ${CRUSOE_MULTIMODAL_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-true}
       CRUSOE_AGENT_ANALYSIS_ENABLED: ${CRUSOE_AGENT_ANALYSIS_ENABLED:-true}
-      ORBITOPS_RADIATION_SOURCE: ${ORBITOPS_RADIATION_SOURCE:-auto}
-      ORBITOPS_RADIATION_CACHE_SECONDS: ${ORBITOPS_RADIATION_CACHE_SECONDS:-60}
-      ORBITOPS_RADIATION_TIMEOUT_SECONDS: ${ORBITOPS_RADIATION_TIMEOUT_SECONDS:-2.5}
+      ROBINSON_RADIATION_SOURCE: ${ROBINSON_RADIATION_SOURCE:-auto}
+      ROBINSON_RADIATION_CACHE_SECONDS: ${ROBINSON_RADIATION_CACHE_SECONDS:-60}
+      ROBINSON_RADIATION_TIMEOUT_SECONDS: ${ROBINSON_RADIATION_TIMEOUT_SECONDS:-2.5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,29 +68,29 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  orbitops-simulator:
+  robinson-simulator:
     build: ./backend
     command: ["python", "-m", "app.simulator.telemetry_generator"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
       LOCAL_GPU_TELEMETRY_ENABLED: ${LOCAL_GPU_TELEMETRY_ENABLED:-false}
       LOCAL_GPU_NODE_ID: ${LOCAL_GPU_NODE_ID:-node-local}
       LOCAL_GPU_ASSET_ID: ${LOCAL_GPU_ASSET_ID:-gpu-local-0}
     depends_on:
-      orbitops-api:
+      robinson-api:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
 
-  orbitops-agents:
+  robinson-agents:
     build: ./backend
     command: ["python", "-m", "app.agents.runner"]
     env_file:
       - ./backend/.env
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
       CRUSOE_MODEL: ${CRUSOE_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
@@ -98,25 +98,25 @@ services:
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-true}
       CRUSOE_AGENT_ANALYSIS_ENABLED: ${CRUSOE_AGENT_ANALYSIS_ENABLED:-true}
     depends_on:
-      orbitops-api:
+      robinson-api:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
 
-  orbitops-executor:
+  robinson-executor:
     build: ./backend
     command: ["python", "-m", "app.services.command_executor"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      orbitops-api:
+      robinson-api:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  orbitops_pg:
+  robinson_pg:
     driver: local

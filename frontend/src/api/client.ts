@@ -110,7 +110,7 @@ export async function approveMissionPatch(patchId: string): Promise<MissionPatch
       method: "POST",
       body: JSON.stringify({
         operator_id: "demo-operator",
-        operator_note: "Approved from OrbitOps frontend",
+        operator_note: "Approved from Robinson frontend",
       }),
     },
   );
@@ -125,7 +125,7 @@ export async function rejectMissionPatch(patchId: string): Promise<MissionPatchD
       method: "POST",
       body: JSON.stringify({
         operator_id: "demo-operator",
-        operator_note: "Rejected from OrbitOps frontend",
+        operator_note: "Rejected from Robinson frontend",
       }),
     },
   );

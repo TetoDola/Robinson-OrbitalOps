@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "orbitops-backend"
+name = "robinson-backend"
 version = "0.1.0"
-description = "OrbitOps backend scaffold (Phase 1)."
+description = "Robinson backend scaffold (Phase 1)."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",

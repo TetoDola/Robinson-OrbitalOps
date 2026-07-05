@@ -6,10 +6,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops"
+    database_url: str = "postgresql+asyncpg://robinson:robinson@postgres:5432/robinson"
     redis_url: str = "redis://redis:6379/0"
 
-    app_name: str = "OrbitOps API"
+    app_name: str = "Robinson API"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_prefix: str = ""
@@ -35,9 +35,9 @@ class Settings(BaseSettings):
     local_gpu_telemetry_enabled: bool = False
     local_gpu_node_id: str = "node-local"
     local_gpu_asset_id: str = "gpu-local-0"
-    orbitops_radiation_source: str = "auto"
-    orbitops_radiation_cache_seconds: int = 60
-    orbitops_radiation_timeout_seconds: float = 2.5
+    robinson_radiation_source: str = "auto"
+    robinson_radiation_cache_seconds: int = 60
+    robinson_radiation_timeout_seconds: float = 2.5
 
     model_config = SettingsConfigDict(
         env_prefix="",

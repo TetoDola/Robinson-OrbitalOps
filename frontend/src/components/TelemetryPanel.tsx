@@ -39,8 +39,8 @@ export default function TelemetryPanel() {
       <div className="rail-brand">
         <div className="brand-mark">OPS</div>
         <div>
-          <h1>OrbitOps</h1>
-          <p>Orbital datacenter command</p>
+          <h1>Robinson</h1>
+          <p>Neon Noir command</p>
         </div>
       </div>
 
@@ -55,7 +55,7 @@ export default function TelemetryPanel() {
         <div className="section-header">
           <div>
             <div className="eyebrow">Mission</div>
-            <h2 className="panel-title">AKJA-01</h2>
+            <h2 className="panel-title">Neon Noir</h2>
           </div>
           <span className={`connection-pill ${connectionStatus}`}>
             <span className="state-dot" />

@@ -29,7 +29,7 @@ async def process_once() -> bool:
     async with get_redis() as redis:
         messages = await redis.xreadgroup(
             "agents",
-            "orbitops-agents-1",
+            "robinson-agents-1",
             {StreamName.telemetry_events.value: ">"},
             count=1,
             block=1000,

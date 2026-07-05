@@ -1,6 +1,6 @@
-# OrbitOps Backend Plan
+# Robinson Backend Plan
 
-OrbitOps backend is a Dockerized mission-control simulator: it models an orbital GPU datacenter, runs independent agents over live telemetry, calculates orbit-aware constraints, generates safe mission patches, executes approved mock commands, and streams the full incident lifecycle to the UI.
+Robinson backend is a Dockerized mission-control simulator: it models an orbital GPU datacenter, runs independent agents over live telemetry, calculates orbit-aware constraints, generates safe mission patches, executes approved mock commands, and streams the full incident lifecycle to the UI.
 
 The backend should not become a real spacecraft simulator. It should feel serious, deterministic, inspectable, and demoable.
 
@@ -105,7 +105,7 @@ Smithery = MCP server registry / agent tool marketplace.
 
 Run these services in Docker Compose.
 
-### `orbitops-api`
+### `robinson-api`
 
 Responsibilities:
 
@@ -116,7 +116,7 @@ Responsibilities:
 - Reads and writes PostgreSQL.
 - Publishes UI events.
 
-### `orbitops-simulator`
+### `robinson-simulator`
 
 Responsibilities:
 
@@ -127,7 +127,7 @@ Responsibilities:
 - Mock thermal, vibration, and downlink events.
 - Publishes telemetry to Redis Streams.
 
-### `orbitops-agents`
+### `robinson-agents`
 
 Responsibilities:
 
@@ -151,7 +151,7 @@ Responsibilities:
   - blocked
   - error
 
-### `orbitops-workflow-supervisor` optional
+### `robinson-workflow-supervisor` optional
 
 Responsibilities:
 
@@ -163,7 +163,7 @@ Responsibilities:
 
 Use this only if it helps demo reliability. The core backend must still work without it.
 
-### `orbitops-executor`
+### `robinson-executor`
 
 Responsibilities:
 
@@ -429,13 +429,13 @@ Every worker must consume Redis Streams through consumer groups.
 
 | Stream | Consumer group | Consumers |
 |---|---|---|
-| `telemetry:events` | `agents` | `orbitops-agents-*` |
-| `agent:status` | `api-status` | `orbitops-api-*` |
-| `agent:findings` | `commander` | `orbitops-agents-commander-*` |
-| `commander:patches` | `api-patches` | `orbitops-api-*` |
-| `command:requests` | `executor` | `orbitops-executor-*` |
-| `command:results` | `api-results` | `orbitops-api-*` |
-| `ui:events` | `websocket-broadcast` | `orbitops-api-*` |
+| `telemetry:events` | `agents` | `robinson-agents-*` |
+| `agent:status` | `api-status` | `robinson-api-*` |
+| `agent:findings` | `commander` | `robinson-agents-commander-*` |
+| `commander:patches` | `api-patches` | `robinson-api-*` |
+| `command:requests` | `executor` | `robinson-executor-*` |
+| `command:results` | `api-results` | `robinson-api-*` |
+| `ui:events` | `websocket-broadcast` | `robinson-api-*` |
 
 Processing contract:
 
@@ -712,14 +712,14 @@ Show workflow progress during development.
 Handle retries and resumable steps.
 Gate a demo workflow at human approval.
 Call backend APIs in a controlled sequence.
-Mirror workflow status into OrbitOps streams.
+Mirror workflow status into Robinson streams.
 ```
 
 Do not use Smithers to:
 
 ```text
 Store canonical world state.
-Bypass the OrbitOps API.
+Bypass the Robinson API.
 Bypass the safety validator.
 Let the LLM directly execute commands.
 Send UI data that does not also exist in Redis/Postgres.
@@ -736,7 +736,7 @@ Smithers workflow step starts
   -> API WebSocket streams it to frontend
 ```
 
-If Smithers is unavailable, `orbitops-agents` should still run the same workflow using plain Python async loops.
+If Smithers is unavailable, `robinson-agents` should still run the same workflow using plain Python async loops.
 
 ## 5. Folder Structure
 
@@ -1667,7 +1667,7 @@ if checkpoint_hash_mismatch:
 Key product framing:
 
 ```text
-OrbitOps does not predict exact bit flips.
+Robinson does not predict exact bit flips.
 It detects corruption evidence and protects training integrity.
 ```
 
@@ -1900,7 +1900,7 @@ Prompt structure:
 
 ```text
 STATIC PREFIX:
-- OrbitOps mission doctrine
+- Robinson mission doctrine
 - allowed commands
 - safety rules
 - mission patch JSON schema
@@ -2329,7 +2329,7 @@ scenario state machine
 Acceptance criteria:
 
 ```text
-orbitops-simulator publishes telemetry:events.
+robinson-simulator publishes telemetry:events.
 world state changes over time.
 satellite position and eclipse countdown update.
 ```
@@ -2464,13 +2464,13 @@ No manual database cleanup is needed.
 
 ```yaml
 services:
-  orbitops-api:
+  robinson-api:
     build: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
       CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
@@ -2482,11 +2482,11 @@ services:
       redis:
         condition: service_healthy
 
-  orbitops-simulator:
+  robinson-simulator:
     build: ./backend
     command: python -m app.simulator.telemetry_generator
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -2494,11 +2494,11 @@ services:
       redis:
         condition: service_healthy
 
-  orbitops-agents:
+  robinson-agents:
     build: ./backend
     command: python -m app.agents.runner
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
       CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
@@ -2510,11 +2510,11 @@ services:
       redis:
         condition: service_healthy
 
-  orbitops-executor:
+  robinson-executor:
     build: ./backend
     command: python -m app.services.command_executor
     environment:
-      DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
+      DATABASE_URL: postgresql+asyncpg://robinson:robinson@postgres:5432/robinson
       REDIS_URL: redis://redis:6379/0
     depends_on:
       postgres:
@@ -2525,15 +2525,15 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: orbitops
-      POSTGRES_PASSWORD: orbitops
-      POSTGRES_DB: orbitops
+      POSTGRES_USER: robinson
+      POSTGRES_PASSWORD: robinson
+      POSTGRES_DB: robinson
     ports:
       - "5432:5432"
     volumes:
-      - orbitops_pg:/var/lib/postgresql/data
+      - robinson_pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U orbitops -d orbitops"]
+      test: ["CMD-SHELL", "pg_isready -U robinson -d robinson"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -2549,7 +2549,7 @@ services:
       retries: 12
 
 volumes:
-  orbitops_pg:
+  robinson_pg:
 ```
 
 ## 27. Immediate Next Step

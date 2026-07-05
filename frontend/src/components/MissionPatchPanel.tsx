@@ -5,10 +5,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-import { approveMissionPatch, rejectMissionPatch } from "../api/client";
-import { runHardwareToolCalls } from "../services/localTools";
-import { useWorldStore, type PatchMode } from "../store/worldStore";
-import type { MissionPatchAction, NodeState } from "../types/backend";
+import { useWorldStore } from "../store/worldStore";
+import type { NodeState } from "../types/backend";
 import AgentStatus from "./AgentStatus";
 import IRCamPopup, { type IrNodeTarget } from "./IRCamPopup";
 import SimulationControls from "./SimulationControls";
@@ -49,12 +47,6 @@ function formatClock(value: string | undefined): string {
   return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function actionLabel(action: MissionPatchAction): string {
-  const target = action.node_id ?? action.job_id ?? action.checkpoint_id ?? action.target_asset_id;
-  const prefix = humanize(action.type);
-  return target ? `${prefix} on ${humanize(target)}` : prefix;
-}
-
 function nodeLabel(node: NodeState): string {
   const temp = typeof node.temp_c === "number" ? `, ${node.temp_c.toFixed(1)} C` : "";
   const ecc = typeof node.ecc_errors === "number" ? `, ECC ${node.ecc_errors}` : "";
@@ -81,24 +73,6 @@ function nodeSeverityClass(node: NodeState): string {
   return "node-state";
 }
 
-function patchStateLabel(mode: PatchMode, backendStatus?: string): string {
-  if (mode === "execute") return "APPROVED";
-  if (mode === "verified") return "VERIFIED";
-  if (mode === "replan") return "REPLAN REQUESTED";
-  if (mode === "modify") return "MODIFYING";
-  if (mode === "reject") return "REJECTED";
-  if (backendStatus === "pending_approval") return "NEEDS APPROVAL";
-  return backendStatus ? humanize(backendStatus).toUpperCase() : "AWAITING APPROVAL";
-}
-
-function patchStateClass(mode: PatchMode): string {
-  if (mode === "reject") return "status-red";
-  if (mode === "replan" || mode === "modify") return "status-yellow";
-  if (mode === "execute") return "status-cyan";
-  if (mode === "verified") return "status-green";
-  return "status-orange";
-}
-
 function severityClass(value: string): string {
   const severity = value.toLowerCase();
   if (severity.includes("approval") || severity.includes("red") || severity.includes("critical")) {
@@ -114,10 +88,6 @@ function severityClass(value: string): string {
     return "severity info";
   }
   return "severity info";
-}
-
-function shortPatchId(id: string): string {
-  return id.length > 12 ? `patch-${id.slice(0, 8)}` : id;
 }
 
 function RackDiagram({ hasIssue }: { hasIssue: boolean }) {
@@ -141,10 +111,6 @@ export default function MissionPatchPanel() {
   const inspectionOpen = useWorldStore((state) => state.inspectionOpen);
   const setInspectionOpen = useWorldStore((state) => state.setInspectionOpen);
   const missionPatch = useWorldStore((state) => state.missionPatch);
-  const setMissionPatch = useWorldStore((state) => state.setMissionPatch);
-  const patchMode = useWorldStore((state) => state.patchMode);
-  const setPatchMode = useWorldStore((state) => state.setPatchMode);
-  const [approvalError, setApprovalError] = useState<string | null>(null);
   const worldState = useWorldStore((state) => state.worldState);
   const incidents = useWorldStore((state) => state.incidents);
   const resetIdle = !missionPatch && incidents.length === 0;
@@ -180,60 +146,11 @@ export default function MissionPatchPanel() {
     };
   }
 
-  const actions = missionPatch?.actions?.length ? missionPatch.actions.map(actionLabel) : [];
-  const rollbackValue = missionPatch?.rollback_plan?.if_verification_fails;
-  const rollbackSteps = Array.isArray(rollbackValue)
-    ? rollbackValue.filter((step): step is string => typeof step === "string")
-    : [];
   const nodes = worldState?.nodes ?? [];
   const visibleIncidents = incidents;
   const maxNodeTemp = nodes.reduce((max, node) => Math.max(max, node.temp_c ?? 0), 0);
   const hasIssue = Boolean(missionPatch || visibleIncidents.length > 0 || maxNodeTemp >= 80);
-  const title = missionPatch
-    ? `${shortPatchId(missionPatch.id)}: protect training integrity`
-    : resetIdle
-      ? "no active mission patch"
-      : "incident under review";
   const assetStateLabel = resetIdle ? "monitoring" : missionPatch ? "review required" : "attention";
-  const operatorLabel = resetIdle ? "standby" : missionPatch?.status === "pending_approval" ? "approve or replan" : humanize(missionPatch?.status ?? "review");
-  const approvalMode = resetIdle ? "Monitoring" : "Human approval";
-  const statusLabel = resetIdle ? "MONITORING" : patchStateLabel(patchMode, missionPatch?.status);
-  const statusClass = resetIdle ? "status-green" : patchStateClass(patchMode);
-  const canDecidePatch = missionPatch?.status === "pending_approval";
-
-  async function approvePatch() {
-    if (!missionPatch) return;
-    setApprovalError(null);
-    setPatchMode("execute");
-
-    try {
-      const decision = await approveMissionPatch(missionPatch.id);
-      setMissionPatch(decision.patch);
-      if (decision.localToolCalls.length > 0) {
-        void runHardwareToolCalls(decision.localToolCalls);
-      }
-    } catch {
-      setPatchMode("pending");
-      setApprovalError("Approve failed — the backend rejected the request or is unreachable. The patch is still pending.");
-    }
-  }
-
-  async function rejectPatch() {
-    if (!missionPatch) return;
-    setApprovalError(null);
-    setPatchMode("reject");
-
-    try {
-      const decision = await rejectMissionPatch(missionPatch.id);
-      setMissionPatch(decision.patch);
-      if (decision.localToolCalls.length > 0) {
-        void runHardwareToolCalls(decision.localToolCalls);
-      }
-    } catch {
-      setPatchMode("pending");
-      setApprovalError("Reject failed — the backend rejected the request or is unreachable. The patch is still pending.");
-    }
-  }
 
   return (
     <aside className="right-rail" aria-label="Agents and approvals">
@@ -253,77 +170,11 @@ export default function MissionPatchPanel() {
 
       <SimulationControls />
 
-      <section className="patch-panel" aria-label="Mission patch approval">
-        <div className="section-header compact">
-          <div>
-            <div className="eyebrow">Approvals</div>
-            <h3 className="panel-title">{title}</h3>
-          </div>
-          <strong className={statusClass}>{statusLabel}</strong>
-        </div>
-        <div className="patch-meta">
-          <div>
-            <span className="label">mode</span>
-            <strong>{approvalMode}</strong>
-          </div>
-          <div>
-            <span className="label">operator</span>
-            <strong className={resetIdle ? "status-green" : "status-orange"}>{operatorLabel}</strong>
-          </div>
-          <div>
-            <span className="label">window</span>
-            <strong>{telemetry.eclipse}</strong>
-          </div>
-        </div>
-        <p className="patch-summary">
-          {missionPatch?.summary ??
-            (resetIdle
-              ? "Agents are monitoring the reset baseline. No recovery patch is awaiting approval."
-              : "An incident is open. Waiting for Commander to assemble a validated mission patch.")}
-        </p>
-        {missionPatch ? (
-          <div className="patch-scope">
-            <span className={severityClass(String(missionPatch.severity))}>{missionPatch.severity}</span>
-            <span>
-              {actions.length} command{actions.length === 1 ? "" : "s"} in scope — approving executes all of them
-            </span>
-          </div>
-        ) : null}
-        <ol className="patch-action-list">
-          {actions.map((action) => (
-            <li key={action}>{action}</li>
-          ))}
-        </ol>
-        {rollbackSteps.length > 0 ? (
-          <p className="patch-rollback">
-            <span className="label">rollback if verification fails</span>
-            {rollbackSteps.map(humanize).join(", ")}
-          </p>
-        ) : null}
-        {approvalError ? <p className="approval-error">{approvalError}</p> : null}
-        {resetIdle ? (
-          <div className="patch-buttons">
-            <button className="patch-btn" disabled type="button">
-              Monitoring Baseline
-            </button>
-          </div>
-        ) : (
-          <div className="patch-buttons">
-            <button className="patch-btn primary" disabled={!canDecidePatch} onClick={() => void approvePatch()} type="button">
-              Approve
-            </button>
-            <button className="patch-btn danger" disabled={!canDecidePatch} onClick={() => void rejectPatch()} type="button">
-              Reject
-            </button>
-          </div>
-        )}
-      </section>
-
       <section className={inspectionOpen ? "rail-section asset-detail is-selected" : "rail-section asset-detail"}>
         <div className="section-header compact">
           <div>
             <div className="eyebrow">Selected asset</div>
-            <h3 className="panel-title">AKJA-01 datacenter</h3>
+            <h3 className="panel-title">Neon Noir</h3>
           </div>
           <span className="selection-state">{inspectionOpen ? "selected" : "idle"}</span>
         </div>
@@ -380,7 +231,11 @@ export default function MissionPatchPanel() {
           <IRCamPopup
             anchor={irView.anchor}
             node={irView.node}
-            sourceImageUrl={latestThermalInput?.asset_id === irView.node.id ? latestThermalInput.image_data_url : null}
+            sourceImageUrl={
+              latestThermalInput && latestThermalInput.asset_id === irView.node.id
+                ? latestThermalInput.image_data_url
+                : null
+            }
             onClose={() => setIrView(null)}
           />
         ) : null}

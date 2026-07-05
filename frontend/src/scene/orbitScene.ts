@@ -294,8 +294,8 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   const reticle = document.createElement("button");
   reticle.className = "sat-reticle";
   reticle.type = "button";
-  reticle.setAttribute("aria-label", "Inspect AKJA-01 satellite");
-  reticle.innerHTML = '<span class="sat-reticle-label">AKJA-01</span>';
+  reticle.setAttribute("aria-label", "Inspect Neon Noir datacenter");
+  reticle.innerHTML = '<span class="sat-reticle-label">Neon Noir</span>';
   document.body.appendChild(reticle);
 
   const controls = new OrbitControls(camera, renderer.domElement);
