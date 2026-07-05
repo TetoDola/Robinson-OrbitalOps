@@ -5,6 +5,7 @@ import type {
   AgentFinding,
   AgentRuntimeItem,
   AgentStatusItem,
+  AiStatusResponse,
   BackendLiveEvent,
   Command,
   Incident,
@@ -61,6 +62,14 @@ export const initialTelemetry: TelemetrySnapshot = {
   patchConfidence: "87%",
 };
 
+export interface WorkflowEventItem {
+  id: string;
+  time: string;
+  label: string;
+  detail: string;
+  status: "running" | "complete" | "blocked" | "info";
+}
+
 interface WorldStore {
   worldState: WorldState | null;
   worldVersion: number | null;
@@ -68,6 +77,8 @@ interface WorldStore {
   telemetry: TelemetrySnapshot;
   agents: AgentStatusItem[];
   agentRuntime: AgentRuntimeItem[];
+  aiStatus: AiStatusResponse | null;
+  workflowEvents: WorkflowEventItem[];
   agentFindings: AgentFinding[];
   incidents: Incident[];
   missionPatch: MissionPatch | null;
@@ -86,6 +97,8 @@ interface WorldStore {
   upsertAgent: (agent: AgentStatusItem) => void;
   setAgentRuntime: (agents: AgentRuntimeItem[]) => void;
   upsertAgentRuntime: (agent: AgentRuntimeItem) => void;
+  setAiStatus: (aiStatus: AiStatusResponse | null) => void;
+  pushWorkflowEvent: (event: WorkflowEventItem) => void;
   setAgentFindings: (findings: AgentFinding[]) => void;
   upsertAgentFinding: (finding: AgentFinding) => void;
   setIncidents: (incidents: Incident[]) => void;
@@ -108,11 +121,13 @@ export const useWorldStore = create<WorldStore>()(
     telemetry: initialTelemetry,
     agents: [],
     agentRuntime: [],
+    aiStatus: null,
+    workflowEvents: [],
     agentFindings: [],
     incidents: [],
     missionPatch: null,
     commands: [],
-    simSpeed: 1,
+    simSpeed: 60,
     followNode: false,
     inspectionOpen: false,
     patchMode: "pending",
@@ -136,6 +151,9 @@ export const useWorldStore = create<WorldStore>()(
         const agentRuntime = state.agentRuntime.filter((item) => item.agent !== agent.agent);
         return { agentRuntime: [...agentRuntime, agent].sort((a, b) => a.agent.localeCompare(b.agent)) };
       }),
+    setAiStatus: (aiStatus) => set({ aiStatus }),
+    pushWorkflowEvent: (event) =>
+      set((state) => ({ workflowEvents: [event, ...state.workflowEvents].slice(0, 12) })),
     setAgentFindings: (agentFindings) =>
       set({
         agentFindings: [...agentFindings].sort(
@@ -196,10 +214,23 @@ export const useWorldStore = create<WorldStore>()(
         if (event.type === "agent.status.updated") {
           const agent = event.payload as AgentStatusItem;
           const agents = state.agents.filter((item) => item.agent !== agent.agent);
+          const shouldLog =
+            agent.severity !== "INFO" ||
+            !["monitor", "monitoring", "healthy"].includes(agent.phase) ||
+            !["monitoring", "healthy"].includes(agent.status);
           return {
             agents: [...agents, { ...agent, updated_at: event.timestamp }].sort((a, b) =>
               a.agent.localeCompare(b.agent),
             ),
+            workflowEvents: shouldLog
+              ? workflowEntry(
+                  state.workflowEvents,
+                  event,
+                  agent.display_name,
+                  `${agent.phase}: ${agent.message}`,
+                  agent.status === "proposing" || agent.status === "analyzing" ? "running" : "info",
+                )
+              : state.workflowEvents,
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -212,6 +243,13 @@ export const useWorldStore = create<WorldStore>()(
           return {
             agentFindings: [...agentFindings, finding].sort(
               (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+            ),
+            workflowEvents: workflowEntry(
+              state.workflowEvents,
+              event,
+              "Finding created",
+              `${finding.agent_name.replace(/_/g, " ")}: ${finding.finding}`,
+              "complete",
             ),
             lastEvent: event,
             lastEventAt: event.timestamp,
@@ -243,6 +281,7 @@ export const useWorldStore = create<WorldStore>()(
               approval_required: payload.approval_required,
             },
             patchMode: "pending",
+            workflowEvents: workflowEntry(state.workflowEvents, event, "Mission patch", payload.summary, "running"),
             lastEvent: event,
             lastEventAt: event.timestamp,
             demoResetAt: null,
@@ -255,6 +294,7 @@ export const useWorldStore = create<WorldStore>()(
             agentFindings: [],
             missionPatch: null,
             commands: [],
+            workflowEvents: workflowEntry([], event, "Reset baseline", "All agents monitoring", "complete"),
             patchMode: "pending",
             lastEvent: event,
             lastEventAt: event.timestamp,
@@ -270,6 +310,7 @@ export const useWorldStore = create<WorldStore>()(
                 ? { ...state.missionPatch, status: payload.status }
                 : state.missionPatch,
             patchMode: event.type === "mission_patch.executing" ? "execute" : "execute",
+            workflowEvents: workflowEntry(state.workflowEvents, event, "Mission patch approved", payload.status, "complete"),
             lastEvent: event,
             lastEventAt: event.timestamp,
             demoResetAt: null,
@@ -284,6 +325,7 @@ export const useWorldStore = create<WorldStore>()(
                 ? { ...state.missionPatch, status: payload.status }
                 : state.missionPatch,
             patchMode: "reject",
+            workflowEvents: workflowEntry(state.workflowEvents, event, "Mission patch rejected", payload.status, "blocked"),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -292,6 +334,7 @@ export const useWorldStore = create<WorldStore>()(
         if (event.type === "command.batch_created") {
           return {
             patchMode: "execute",
+            workflowEvents: workflowEntry(state.workflowEvents, event, "Commands queued", "Executor received approved patch", "running"),
             lastEvent: event,
             lastEventAt: event.timestamp,
             demoResetAt: null,
@@ -308,6 +351,7 @@ export const useWorldStore = create<WorldStore>()(
           return {
             commands: upsertCommand(payload),
             patchMode: "execute",
+            workflowEvents: workflowEntry(state.workflowEvents, event, "Command started", payload.action_type, "running"),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -324,6 +368,7 @@ export const useWorldStore = create<WorldStore>()(
           return {
             commands: upsertCommand(payload),
             patchMode: "verify",
+            workflowEvents: workflowEntry(state.workflowEvents, event, "Command succeeded", payload.action_type, "complete"),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -337,6 +382,38 @@ export const useWorldStore = create<WorldStore>()(
                 ? { ...state.missionPatch, status: payload.status }
                 : state.missionPatch,
             patchMode: "verified",
+            workflowEvents: workflowEntry(state.workflowEvents, event, "Verification complete", payload.status, "complete"),
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+          };
+        }
+
+        if (event.type === "simulator.injected") {
+          const payload = event.payload as { issue?: string };
+          return {
+            workflowEvents: workflowEntry(
+              state.workflowEvents,
+              event,
+              "Simulation injected",
+              String(payload.issue ?? "manual input").replace(/-/g, " "),
+              "complete",
+            ),
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+          };
+        }
+
+        if (event.type === "thermal.image.analysis_completed") {
+          const payload = event.payload as { analysis_status?: string };
+          const blocked = String(payload.analysis_status ?? "").includes("blocked");
+          return {
+            workflowEvents: workflowEntry(
+              state.workflowEvents,
+              event,
+              "Thermal AI analysis",
+              String(payload.analysis_status ?? "completed").replace(/_/g, " "),
+              blocked ? "blocked" : "complete",
+            ),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -346,3 +423,22 @@ export const useWorldStore = create<WorldStore>()(
       }),
   })),
 );
+
+function workflowEntry(
+  existing: WorkflowEventItem[],
+  event: BackendLiveEvent,
+  label: string,
+  detail: string,
+  status: WorkflowEventItem["status"],
+): WorkflowEventItem[] {
+  return [
+    {
+      id: `${event.type}-${event.timestamp}-${label}`,
+      time: event.timestamp,
+      label,
+      detail,
+      status,
+    },
+    ...existing,
+  ].slice(0, 12);
+}

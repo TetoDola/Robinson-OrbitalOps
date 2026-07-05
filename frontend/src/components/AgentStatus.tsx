@@ -27,42 +27,42 @@ const fallbackAgents: AgentStatusItem[] = [
   {
     agent: "workload_agent",
     display_name: "Workload Agent",
-    status: "investigating",
-    phase: "explain",
-    severity: "ORANGE",
-    message: "Rank 17 all-reduce timeout, orphan worker suspected",
+    status: "monitoring",
+    phase: "monitor",
+    severity: "INFO",
+    message: "Scheduler and GPU utilization are aligned.",
   },
   {
     agent: "thermal_physical_agent",
-    display_name: "Thermal Agent",
-    status: "investigating",
-    phase: "explain",
-    severity: "RED",
-    message: "Node C hotspot confirmed by IR and rack telemetry",
+    display_name: "Thermal / Physical Agent",
+    status: "monitoring",
+    phase: "monitor",
+    severity: "INFO",
+    message: "Node temperatures are in nominal range.",
   },
   {
     agent: "power_orbit_agent",
     display_name: "Power / Orbit Agent",
-    status: "planning",
-    phase: "propose",
-    severity: "ORANGE",
-    message: "Eclipse recovery plan required, battery reserve below target",
+    status: "monitoring",
+    phase: "monitor",
+    severity: "INFO",
+    message: "Orbit and battery envelope are stable.",
   },
   {
     agent: "radiation_integrity_agent",
-    display_name: "Integrity Agent",
-    status: "planning",
-    phase: "propose",
-    severity: "RED",
-    message: "ckpt-184900 suspect after ECC spike and NaN loss",
+    display_name: "Radiation / Integrity Agent",
+    status: "monitoring",
+    phase: "monitor",
+    severity: "INFO",
+    message: "ECC and NaN checks are within expected envelope.",
   },
   {
     agent: "checkpoint_downlink_agent",
-    display_name: "Downlink Agent",
-    status: "planning",
-    phase: "propose",
-    severity: "YELLOW",
-    message: "22 GB window cannot carry 180 GB full checkpoint",
+    display_name: "Checkpoint / Downlink Agent",
+    status: "monitoring",
+    phase: "monitor",
+    severity: "INFO",
+    message: "Checkpoint size and downlink capacity are healthy.",
   },
 ];
 
@@ -76,18 +76,27 @@ const detectorScope: Record<string, string> = {
   commander_agent: "Open findings, affected assets, safety validator output, patch status, approval boundary.",
 };
 
-function severityClass(severity: string): string {
-  const value = severity.toLowerCase();
-  if (value.includes("red") || value.includes("critical")) return "severity red";
-  if (value.includes("orange") || value.includes("warn")) return "severity orange";
-  if (value.includes("yellow")) return "severity yellow";
-  return "severity";
+function workStateClass(agent: AgentStatusItem, missionPatchActive: boolean): string {
+  const value = `${agent.status} ${agent.phase}`.toLowerCase();
+  if (missionPatchActive && agent.agent === "commander_agent") return "status-orange";
+  if (value.includes("monitor") || value.includes("healthy")) return "status-green";
+  if (value.includes("analy") || value.includes("detect") || value.includes("running")) return "status-cyan";
+  if (value.includes("propos") || value.includes("planning")) return "status-orange";
+  if (value.includes("blocked") || value.includes("failed")) return "status-red";
+  return "status-cyan";
+}
+
+function workStateLabel(agent: AgentStatusItem, missionPatchActive: boolean): string {
+  if (missionPatchActive && agent.agent === "commander_agent") return "patch ready";
+  const value = agent.status || agent.phase;
+  if (value === "healthy" || value === "scheduled") return "monitoring";
+  return humanize(value);
 }
 
 function toneClass(tone: Tone | undefined): string {
   if (tone === "critical") return "status-red";
   if (tone === "warn") return "status-orange";
-  return "status-yellow";
+  return "status-green";
 }
 
 function humanize(value: string): string {
@@ -265,6 +274,7 @@ function AgentDetailModal({
   const assets = latestFinding?.affected_assets?.length ? latestFinding.affected_assets : [];
   const signalRows = buildSignalRows(agent.agent, worldState, openFindingCount, relatedCommands.length || commandCount);
   const nextRunSeconds = secondsUntil(runtime?.next_run_at, nowMs);
+  const patchActive = Boolean(linkedPatchId || worldState?.active_mission_patch);
   const thermalInput: ThermalVisualInput | null =
     agent.agent === "thermal_physical_agent" ? (worldState?.thermal.latest_visual_input ?? null) : null;
 
@@ -303,9 +313,9 @@ function AgentDetailModal({
             <div className="section-header compact">
               <div>
                 <div className="eyebrow">detector state</div>
-                <strong>{humanize(agent.status)}</strong>
+                <strong>{workStateLabel(agent, patchActive)}</strong>
               </div>
-              <b className={severityClass(agent.severity)}>{agent.severity}</b>
+              <b className={workStateClass(agent, patchActive)}>{workStateLabel(agent, patchActive)}</b>
             </div>
             <p>{agent.message}</p>
             <div className="agent-detail-metrics">
@@ -440,14 +450,14 @@ function AgentDetailModal({
                 <li key={finding.id}>
                   <time>{formatDate(finding.created_at)}</time>
                   <span>{finding.finding}</span>
-                  <b className={severityClass(finding.severity)}>{finding.severity}</b>
+                  <b className={toneClass(finding.status === "open" ? "warn" : "nominal")}>{finding.status}</b>
                 </li>
               ))}
               {!history.length && !latestFinding ? (
                 <li>
                   <time>{formatDate(agent.updated_at)}</time>
                   <span>{agent.message}</span>
-                  <b className={severityClass(agent.severity)}>{agent.severity}</b>
+                  <b className={workStateClass(agent, patchActive)}>{workStateLabel(agent, patchActive)}</b>
                 </li>
               ) : null}
             </ol>
@@ -490,6 +500,7 @@ export default function AgentStatus() {
   const relatedCommands = commands.filter((command) => commandMatchesAgent(command, latestFinding));
   const patchActions = missionPatch?.actions ?? [];
   const openFindingCount = agentFindings.filter((finding) => finding.status === "open").length;
+  const missionPatchActive = Boolean(missionPatch);
 
   return (
     <section className="rail-section" aria-label="Independent agent status">
@@ -509,9 +520,9 @@ export default function AgentStatus() {
               <span>
                 <strong>{agent.display_name}</strong>
                 {agent.message}
-                <small>{runtime?.run_state ?? "scheduled"} | next {nextRun}</small>
+                <small>next run {nextRun}</small>
               </span>
-              <b className={severityClass(agent.severity)}>{agent.severity}</b>
+              <b className={workStateClass(agent, missionPatchActive)}>{workStateLabel(agent, missionPatchActive)}</b>
             </button>
           );
         })}

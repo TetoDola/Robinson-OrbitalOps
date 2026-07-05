@@ -142,6 +142,15 @@ export interface AgentsRuntimeResponse {
   agents: AgentRuntimeItem[];
 }
 
+export interface AiStatusResponse {
+  provider: string;
+  enabled: boolean;
+  configured: boolean;
+  status: string;
+  text_model: string;
+  multimodal_model: string;
+}
+
 export interface AgentFinding {
   id: string;
   agent_name: string;

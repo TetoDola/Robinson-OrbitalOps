@@ -1,5 +1,6 @@
 import type {
   ActiveMissionPatchResponse,
+  AiStatusResponse,
   AgentFindingsResponse,
   AgentsRuntimeResponse,
   AgentsStatusResponse,
@@ -46,6 +47,10 @@ export function getAgentsStatus(): Promise<AgentsStatusResponse> {
 
 export function getAgentsRuntime(): Promise<AgentsRuntimeResponse> {
   return fetchJson<AgentsRuntimeResponse>("/agents/runtime");
+}
+
+export function getAiStatus(): Promise<AiStatusResponse> {
+  return fetchJson<AiStatusResponse>("/agents/ai-status");
 }
 
 export function getAgentFindings(): Promise<AgentFindingsResponse> {

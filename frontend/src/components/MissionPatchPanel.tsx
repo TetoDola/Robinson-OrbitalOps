@@ -119,14 +119,16 @@ function patchStateLabel(mode: PatchMode, backendStatus?: string): string {
   if (mode === "replan") return "REPLAN REQUESTED";
   if (mode === "modify") return "MODIFYING";
   if (mode === "reject") return "REJECTED";
+  if (backendStatus === "pending_approval") return "NEEDS APPROVAL";
   return backendStatus ? humanize(backendStatus).toUpperCase() : "AWAITING APPROVAL";
 }
 
 function patchStateClass(mode: PatchMode): string {
   if (mode === "reject") return "status-red";
   if (mode === "replan" || mode === "modify") return "status-yellow";
-  if (mode === "execute") return "status-orange";
-  return "status-red";
+  if (mode === "execute") return "status-cyan";
+  if (mode === "verified") return "status-green";
+  return "status-orange";
 }
 
 function severityClass(value: string): string {
@@ -140,7 +142,10 @@ function severityClass(value: string): string {
   if (severity.includes("yellow")) {
     return "severity yellow";
   }
-  return "severity";
+  if (severity.includes("info") || severity.includes("monitor") || severity.includes("healthy")) {
+    return "severity info";
+  }
+  return "severity info";
 }
 
 function shortPatchId(id: string): string {
@@ -172,8 +177,7 @@ export default function MissionPatchPanel() {
   const setPatchMode = useWorldStore((state) => state.setPatchMode);
   const worldState = useWorldStore((state) => state.worldState);
   const incidents = useWorldStore((state) => state.incidents);
-  const demoResetAt = useWorldStore((state) => state.demoResetAt);
-  const resetIdle = Boolean(demoResetAt && !missionPatch);
+  const resetIdle = !missionPatch && incidents.length === 0;
   const [irView, setIrView] = useState<{ node: IrNodeTarget; anchor: { x: number; y: number } } | null>(null);
 
   useEffect(() => {
@@ -217,11 +221,11 @@ export default function MissionPatchPanel() {
     : resetIdle
       ? "no active mission patch"
       : "patch-042: protect training integrity";
-  const severityLabel = missionPatch?.severity ?? (resetIdle ? "INFO" : "RED");
-  const riskLabel = missionPatch?.severity ?? (resetIdle ? "nominal" : "critical");
+  const assetStateLabel = resetIdle ? "monitoring" : missionPatch ? "review required" : "attention";
+  const operatorLabel = resetIdle ? "standby" : missionPatch?.status === "pending_approval" ? "approve or replan" : humanize(missionPatch?.status ?? "review");
   const approvalMode = resetIdle ? "Monitoring" : "Human approval";
   const statusLabel = resetIdle ? "MONITORING" : patchStateLabel(patchMode, missionPatch?.status);
-  const statusClass = resetIdle ? "status-yellow" : patchStateClass(patchMode);
+  const statusClass = resetIdle ? "status-green" : patchStateClass(patchMode);
 
   async function approvePatch() {
     setPatchMode("execute");
@@ -267,8 +271,8 @@ export default function MissionPatchPanel() {
             <strong>{approvalMode}</strong>
           </div>
           <div>
-            <span className="label">risk</span>
-            <strong className={resetIdle ? "status-yellow" : "status-red"}>{riskLabel}</strong>
+            <span className="label">operator</span>
+            <strong className={resetIdle ? "status-green" : "status-orange"}>{operatorLabel}</strong>
           </div>
           <div>
             <span className="label">window</span>
@@ -320,8 +324,8 @@ export default function MissionPatchPanel() {
         </div>
         <div className="asset-summary">
           <div className="summary-cell">
-            <div className="label">severity</div>
-            <strong className={resetIdle ? "status-yellow" : "status-red"}>{severityLabel}</strong>
+            <div className="label">state</div>
+            <strong className={resetIdle ? "status-green" : "status-orange"}>{assetStateLabel}</strong>
           </div>
           <div className="summary-cell">
             <div className="label">confidence</div>

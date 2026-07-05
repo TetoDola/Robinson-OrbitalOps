@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 
 import {
   getActiveMissionPatch,
+  getAiStatus,
   getAgentFindings,
   getAgentsRuntime,
   getAgentsStatus,
@@ -31,11 +32,12 @@ function fileToDataUrl(file: File): Promise<string> {
 
 async function refreshBackendSnapshot() {
   const store = useWorldStore.getState();
-  const [worldResult, agentsResult, runtimeResult, findingsResult, incidentsResult, patchResult] =
+  const [worldResult, agentsResult, runtimeResult, aiResult, findingsResult, incidentsResult, patchResult] =
     await Promise.allSettled([
       getWorldState(),
       getAgentsStatus(),
       getAgentsRuntime(),
+      getAiStatus(),
       getAgentFindings(),
       getIncidents(),
       getActiveMissionPatch(),
@@ -50,6 +52,9 @@ async function refreshBackendSnapshot() {
   if (runtimeResult.status === "fulfilled") {
     store.setAgentRuntime(runtimeResult.value.agents);
   }
+  if (aiResult.status === "fulfilled") {
+    store.setAiStatus(aiResult.value);
+  }
   if (findingsResult.status === "fulfilled") {
     store.setAgentFindings(findingsResult.value.findings);
   }
@@ -63,12 +68,22 @@ async function refreshBackendSnapshot() {
 
 export default function SimulationControls() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const aiStatus = useWorldStore((state) => state.aiStatus);
+  const workflowEvents = useWorldStore((state) => state.workflowEvents);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [busyIssue, setBusyIssue] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string>("nominal baseline armed");
 
   async function injectIssue(issue: string) {
     setBusyIssue(issue);
+    const store = useWorldStore.getState();
+    store.pushWorkflowEvent({
+      id: `operator-${issue}-${Date.now()}`,
+      time: new Date().toISOString(),
+      label: "Operator input",
+      detail: issue.replace(/-/g, " "),
+      status: "running",
+    });
     try {
       const payload =
         issue === "thermal-frame" && selectedFile
@@ -83,6 +98,32 @@ export default function SimulationControls() {
               source: "operator-sim",
             };
       const response = await injectSimulatorIssue(issue, payload);
+      store.pushWorkflowEvent({
+        id: `backend-${issue}-${Date.now()}`,
+        time: new Date().toISOString(),
+        label: "Backend accepted",
+        detail: response.finding_ids.length ? `${response.finding_ids.length} finding(s)` : "no finding",
+        status: "complete",
+      });
+      if (response.analysis_status) {
+        const blocked = response.analysis_status.includes("blocked");
+        store.pushWorkflowEvent({
+          id: `ai-${issue}-${Date.now()}`,
+          time: new Date().toISOString(),
+          label: "Thermal AI analysis",
+          detail: response.analysis_status.replace(/_/g, " "),
+          status: blocked ? "blocked" : "complete",
+        });
+      }
+      if (response.mission_patch_id) {
+        store.pushWorkflowEvent({
+          id: `patch-${issue}-${Date.now()}`,
+          time: new Date().toISOString(),
+          label: "Mission patch ready",
+          detail: response.mission_patch_id.slice(0, 8),
+          status: "running",
+        });
+      }
       await refreshBackendSnapshot();
       setLastResult(
         response.analysis_status
@@ -103,7 +144,15 @@ export default function SimulationControls() {
           <div className="eyebrow">Simulate</div>
           <h3 className="panel-title">Detector input</h3>
         </div>
-        <strong className={busyIssue ? "status-orange" : "status-yellow"}>{busyIssue ? "sending" : "ready"}</strong>
+        <strong className={busyIssue ? "status-cyan" : "status-green"}>{busyIssue ? "sending" : "ready"}</strong>
+      </div>
+
+      <div className="ai-status-row">
+        <span>AI</span>
+        <strong className={aiStatus?.enabled ? "status-green" : "status-orange"}>
+          {aiStatus?.enabled ? "connected" : "offline"}
+        </strong>
+        <small>{aiStatus?.multimodal_model ?? "Nemotron status pending"}</small>
       </div>
 
       <div className="sim-grid">
@@ -135,6 +184,23 @@ export default function SimulationControls() {
       </div>
 
       <p className="sim-result">{lastResult}</p>
+
+      <div className="workflow-run" aria-label="Live workflow run">
+        {(workflowEvents.length
+          ? workflowEvents
+          : [{ id: "idle", time: "", label: "Monitoring", detail: "Waiting for detector input", status: "info" as const }]
+        )
+          .slice(0, 7)
+          .map((event) => (
+            <div className={`workflow-row ${event.status}`} key={event.id}>
+              <i aria-hidden="true" />
+              <span>
+                <strong>{event.label}</strong>
+                {event.detail}
+              </span>
+            </div>
+          ))}
+      </div>
     </section>
   );
 }

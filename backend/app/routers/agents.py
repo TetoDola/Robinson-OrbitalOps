@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AgentFinding, AgentStatus
 from app.db.session import get_session
+from app.config import settings
 from app.schemas.agent import (
+    AiStatusResponse,
     AgentFindingItem,
     AgentFindingsResponse,
     AgentRuntimeItem,
@@ -56,6 +58,20 @@ async def list_agent_statuses(
             )
             for row in agent_rows
         ]
+    )
+
+
+@router.get("/agents/ai-status", response_model=AiStatusResponse, tags=["agents"])
+async def get_ai_status() -> AiStatusResponse:
+    configured = bool(settings.crusoe_api_key)
+    enabled = bool(settings.crusoe_enabled and configured)
+    return AiStatusResponse(
+        provider="crusoe",
+        enabled=enabled,
+        configured=configured,
+        status="connected" if enabled else "disabled_missing_config" if not configured else "disabled_by_flag",
+        text_model=settings.crusoe_model,
+        multimodal_model=settings.crusoe_multimodal_model,
     )
 
 

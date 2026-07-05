@@ -2,6 +2,22 @@ import { useWorldStore } from "../store/worldStore";
 
 const speeds = [1, 60, 600];
 
+function riskClass(kind: "battery" | "eclipse" | "radiation" | "ecc" | "checkpoint" | "downlink", value: string): string {
+  const normalized = value.toLowerCase();
+  if (kind === "ecc") return normalized.includes("rising") ? "risk-row is-hot" : "risk-row is-info";
+  if (kind === "checkpoint") return normalized.includes("suspect") || normalized.includes("invalid") ? "risk-row is-hot" : "risk-row is-info";
+  if (kind === "radiation") return normalized.includes("elevated") || normalized.includes("high") ? "risk-row is-warn" : "risk-row is-info";
+  if (kind === "battery") return Number.parseFloat(value) < 45 ? "risk-row is-warn" : "risk-row is-info";
+  if (kind === "eclipse") return Number.parseFloat(value) < 15 ? "risk-row is-warn" : "risk-row is-info";
+  if (kind === "downlink") {
+    const [availableRaw, requiredRaw] = value.split("/");
+    const available = Number.parseFloat(availableRaw);
+    const required = Number.parseFloat(requiredRaw);
+    return Number.isFinite(available) && Number.isFinite(required) && available < required ? "risk-row is-warn" : "risk-row is-info";
+  }
+  return "risk-row";
+}
+
 export default function TelemetryPanel() {
   const telemetry = useWorldStore((state) => state.telemetry);
   const simSpeed = useWorldStore((state) => state.simSpeed);
@@ -83,7 +99,7 @@ export default function TelemetryPanel() {
       <section className="rail-section">
         <div className="eyebrow">Risk summary</div>
       <div className="risk-grid" aria-label="Mission critical values">
-        <div className="risk-row is-warn">
+        <div className={riskClass("battery", telemetry.battery)}>
           <span>Battery</span>
           <strong>{telemetry.battery}</strong>
         </div>
@@ -91,27 +107,27 @@ export default function TelemetryPanel() {
           <span>Solar input</span>
           <strong>{telemetry.solar}</strong>
         </div>
-        <div className="risk-row is-warn">
+        <div className={riskClass("eclipse", telemetry.eclipse)}>
           <span>Time to eclipse</span>
           <strong>{telemetry.eclipse}</strong>
         </div>
-        <div className="risk-row is-info">
+        <div className={riskClass("radiation", telemetry.radiation)}>
           <span>Radiation risk</span>
           <strong>{telemetry.radiation}</strong>
         </div>
-        <div className="risk-row is-hot">
+        <div className={riskClass("ecc", telemetry.eccTrend)}>
           <span>ECC trend</span>
           <strong>{telemetry.eccTrend}</strong>
         </div>
-        <div className="risk-row">
+        <div className="risk-row is-info">
           <span>Last trusted checkpoint</span>
           <strong>{telemetry.trustedCheckpoint}</strong>
         </div>
-        <div className="risk-row is-hot">
+        <div className={riskClass("checkpoint", telemetry.latestCheckpoint)}>
           <span>Latest checkpoint</span>
           <strong>{telemetry.latestCheckpoint}</strong>
         </div>
-        <div className="risk-row is-warn">
+        <div className={riskClass("downlink", telemetry.downlink)}>
           <span>Downlink window</span>
           <strong>{telemetry.downlink}</strong>
         </div>

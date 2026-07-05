@@ -73,3 +73,12 @@ class ThermalImageInputResponse(BaseModel):
     finding_id: str | None = None
     mission_patch_id: str | None = None
     world_state_version: int
+
+
+class AiStatusResponse(BaseModel):
+    provider: str
+    enabled: bool
+    configured: bool
+    status: str
+    text_model: str
+    multimodal_model: str
