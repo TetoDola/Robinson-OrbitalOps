@@ -236,7 +236,7 @@ AGENT_SEED_STATUS = [
     {
         "agent": "radiation_integrity_agent",
         "display_name": "Radiation / Integrity Agent",
-        "status": "healthy",
+        "status": "monitoring",
         "phase": "monitor",
         "severity": "INFO",
         "message": "ECC and NaN checks are within expected envelope.",

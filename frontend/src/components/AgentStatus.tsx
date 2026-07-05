@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { useWorldStore } from "../store/worldStore";
+import { approveMissionPatch, rejectMissionPatch } from "../api/client";
+import { useWorldStore, type AgentLogItem } from "../store/worldStore";
 import type {
   AgentFinding,
   AgentRuntimeItem,
   AgentStatusItem,
   Command,
   Incident,
+  MissionPatch,
   MissionPatchAction,
   NodeState,
   ThermalVisualInput,
@@ -81,7 +83,7 @@ function workStateClass(agent: AgentStatusItem, missionPatchActive: boolean): st
   if (missionPatchActive && agent.agent === "commander_agent") return "status-orange";
   if (value.includes("monitor") || value.includes("healthy")) return "status-green";
   if (value.includes("analy") || value.includes("detect") || value.includes("running")) return "status-cyan";
-  if (value.includes("propos") || value.includes("planning")) return "status-orange";
+  if (value.includes("propos") || value.includes("planning") || value.includes("approval")) return "status-orange";
   if (value.includes("blocked") || value.includes("failed")) return "status-red";
   return "status-cyan";
 }
@@ -97,6 +99,13 @@ function toneClass(tone: Tone | undefined): string {
   if (tone === "critical") return "status-red";
   if (tone === "warn") return "status-orange";
   return "status-green";
+}
+
+function logStateClass(status: AgentLogItem["status"]): string {
+  if (status === "blocked") return "status-red";
+  if (status === "complete") return "status-green";
+  if (status === "running") return "status-orange";
+  return "status-cyan";
 }
 
 function humanize(value: string): string {
@@ -144,6 +153,28 @@ function formatInterval(seconds: number | undefined): string {
 function actionLabel(action: string | MissionPatchAction): string {
   if (typeof action === "string") return humanize(action);
   return humanize(String(action.type ?? "action"));
+}
+
+function actionTarget(action: MissionPatchAction): string {
+  const target =
+    action.node_id ??
+    action.job_id ??
+    action.checkpoint_id ??
+    action.target_asset_id ??
+    action.asset_id ??
+    action.asset_ids;
+  if (Array.isArray(target)) return target.join(", ");
+  return typeof target === "string" ? target : "mission scope";
+}
+
+function relatedPatchActions(
+  agent: AgentStatusItem,
+  latestFinding: AgentFinding | undefined,
+  patchActions: MissionPatchAction[],
+): MissionPatchAction[] {
+  if (agent.agent === "commander_agent") return patchActions;
+  if (!latestFinding) return [];
+  return patchActions.filter((action) => latestFinding.recommended_actions.includes(String(action.type)));
 }
 
 function commandMatchesAgent(command: Command, finding: AgentFinding | undefined): boolean {
@@ -242,14 +273,20 @@ interface AgentDetailModalProps {
   history: AgentFinding[];
   relatedIncident?: Incident;
   relatedCommands: Command[];
+  activityLog: AgentLogItem[];
   patchActions: MissionPatchAction[];
+  missionPatch: MissionPatch | null;
+  approvalActions: MissionPatchAction[];
+  approvalBusy: boolean;
   linkedPatchId?: string | null;
   worldState: WorldState | null;
   runtime?: AgentRuntimeItem;
   openFindingCount: number;
   commandCount: number;
   nowMs: number;
+  onApprovePatch: () => Promise<void>;
   onClose: () => void;
+  onRejectPatch: () => Promise<void>;
 }
 
 function AgentDetailModal({
@@ -258,14 +295,20 @@ function AgentDetailModal({
   history,
   relatedIncident,
   relatedCommands,
+  activityLog,
   patchActions,
+  missionPatch,
+  approvalActions,
+  approvalBusy,
   linkedPatchId,
   worldState,
   runtime,
   openFindingCount,
   commandCount,
   nowMs,
+  onApprovePatch,
   onClose,
+  onRejectPatch,
 }: AgentDetailModalProps) {
   const actions = latestFinding?.recommended_actions?.length
     ? latestFinding.recommended_actions
@@ -275,6 +318,7 @@ function AgentDetailModal({
   const signalRows = buildSignalRows(agent.agent, worldState, openFindingCount, relatedCommands.length || commandCount);
   const nextRunSeconds = secondsUntil(runtime?.next_run_at, nowMs);
   const patchActive = Boolean(linkedPatchId || worldState?.active_mission_patch);
+  const canDecidePatch = missionPatch?.status === "pending_approval" && approvalActions.length > 0;
   const thermalInput: ThermalVisualInput | null =
     agent.agent === "thermal_physical_agent" ? (worldState?.thermal.latest_visual_input ?? null) : null;
 
@@ -399,6 +443,41 @@ function AgentDetailModal({
             </ul>
           </section>
 
+          {missionPatch && approvalActions.length > 0 ? (
+            <section className="agent-modal-section agent-approval-section">
+              <div className="section-header compact">
+                <div>
+                  <div className="eyebrow">approval queue</div>
+                  <strong>{humanize(missionPatch.status)}</strong>
+                </div>
+                <b className={canDecidePatch ? "status-orange" : "status-cyan"}>
+                  {canDecidePatch ? "needs approval" : humanize(missionPatch.status)}
+                </b>
+              </div>
+              <ol className="agent-command-approval-list">
+                {approvalActions.map((action) => (
+                  <li key={`${action.type}-${actionTarget(action)}`}>
+                    <span>
+                      <strong>{actionLabel(action)}</strong>
+                      {actionTarget(action)}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <div className="agent-approval-note">
+                These controls are part of one Mission Patch. Approval runs the full validated patch.
+              </div>
+              <div className="agent-approval-buttons">
+                <button disabled={!canDecidePatch || approvalBusy} onClick={() => void onApprovePatch()} type="button">
+                  Approve
+                </button>
+                <button disabled={!canDecidePatch || approvalBusy} onClick={() => void onRejectPatch()} type="button">
+                  Reject
+                </button>
+              </div>
+            </section>
+          ) : null}
+
           {thermalInput ? (
             <section className="agent-modal-section thermal-frame-section">
               <div className="section-header compact">
@@ -440,6 +519,41 @@ function AgentDetailModal({
           <section className="agent-modal-section span-2">
             <div className="section-header compact">
               <div>
+                <div className="eyebrow">live agent log</div>
+                <strong>{activityLog.length ? "event stream" : "no agent events yet"}</strong>
+              </div>
+              <b className="status-cyan">{activityLog.length} entries</b>
+            </div>
+            <ol className="agent-live-log">
+              {(activityLog.length
+                ? activityLog
+                : [
+                    {
+                      id: `${agent.agent}-monitoring-placeholder`,
+                      agent: agent.agent,
+                      time: agent.updated_at ?? new Date(nowMs).toISOString(),
+                      label: "Monitoring",
+                      detail: agent.message,
+                      status: "info" as const,
+                      eventType: "agent.status.updated",
+                    },
+                  ]
+              )
+                .slice(0, 18)
+                .map((item) => (
+                  <li key={item.id}>
+                    <time>{formatDate(item.time)}</time>
+                    <strong>{item.label}</strong>
+                    <span>{item.detail}</span>
+                    <b className={logStateClass(item.status)}>{humanize(item.status)}</b>
+                  </li>
+                ))}
+            </ol>
+          </section>
+
+          <section className="agent-modal-section span-2">
+            <div className="section-header compact">
+              <div>
                 <div className="eyebrow">recent reports</div>
                 <strong>{history.length ? `${history.length} report${history.length === 1 ? "" : "s"}` : "status only"}</strong>
               </div>
@@ -474,11 +588,15 @@ export default function AgentStatus() {
   const agentFindings = useWorldStore((state) => state.agentFindings);
   const incidents = useWorldStore((state) => state.incidents);
   const missionPatch = useWorldStore((state) => state.missionPatch);
+  const setMissionPatch = useWorldStore((state) => state.setMissionPatch);
+  const setPatchMode = useWorldStore((state) => state.setPatchMode);
   const commands = useWorldStore((state) => state.commands);
   const worldState = useWorldStore((state) => state.worldState);
+  const agentLogs = useWorldStore((state) => state.agentLogs);
   const visibleAgents = agents.length > 0 ? agents : fallbackAgents;
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [approvalBusy, setApprovalBusy] = useState(false);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -499,8 +617,37 @@ export default function AgentStatus() {
     : undefined;
   const relatedCommands = commands.filter((command) => commandMatchesAgent(command, latestFinding));
   const patchActions = missionPatch?.actions ?? [];
+  const approvalActions = selectedAgent ? relatedPatchActions(selectedAgent, latestFinding, patchActions) : [];
   const openFindingCount = agentFindings.filter((finding) => finding.status === "open").length;
   const missionPatchActive = Boolean(missionPatch);
+
+  async function approveFromAgent() {
+    if (!missionPatch || approvalBusy) return;
+    setApprovalBusy(true);
+    setPatchMode("execute");
+    try {
+      const updatedPatch = await approveMissionPatch(missionPatch.id);
+      setMissionPatch(updatedPatch);
+    } catch {
+      setPatchMode("pending");
+    } finally {
+      setApprovalBusy(false);
+    }
+  }
+
+  async function rejectFromAgent() {
+    if (!missionPatch || approvalBusy) return;
+    setApprovalBusy(true);
+    setPatchMode("reject");
+    try {
+      const updatedPatch = await rejectMissionPatch(missionPatch.id);
+      setMissionPatch(updatedPatch);
+    } catch {
+      setPatchMode("pending");
+    } finally {
+      setApprovalBusy(false);
+    }
+  }
 
   return (
     <section className="rail-section" aria-label="Independent agent status">
@@ -535,15 +682,21 @@ export default function AgentStatus() {
               history={selectedHistory}
               latestFinding={latestFinding}
               linkedPatchId={missionPatch?.id ?? null}
+              missionPatch={missionPatch}
+              approvalActions={approvalActions}
+              approvalBusy={approvalBusy}
               patchActions={patchActions}
               relatedCommands={relatedCommands}
               relatedIncident={relatedIncident}
+              activityLog={agentLogs[selectedAgent.agent] ?? []}
               worldState={worldState}
               runtime={agentRuntime.find((item) => item.agent === selectedAgent.agent)}
               openFindingCount={openFindingCount}
               commandCount={commands.length}
               nowMs={nowMs}
+              onApprovePatch={approveFromAgent}
               onClose={() => setSelectedAgentId(null)}
+              onRejectPatch={rejectFromAgent}
             />,
             document.body,
           )

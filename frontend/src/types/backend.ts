@@ -58,6 +58,109 @@ export interface RadiationState {
   xid_event: boolean;
 }
 
+export type RadiationLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type RadiationMainCause = "solar" | "Van Allen" | "geomagnetic storm";
+export type RadiationRecommendedAction =
+  | "continue"
+  | "delay compute"
+  | "migrate workload"
+  | "shutdown sensitive tasks";
+
+export interface ProcessedRadiationRisk {
+  radiationRiskScore: number;
+  radiationLevel: RadiationLevel;
+  mainCause: RadiationMainCause;
+  recommendedAction: RadiationRecommendedAction;
+  explanation: string;
+  visualization?: RadiationVisualization;
+  sourceMode?: "mock" | "live" | "fallback" | string;
+  generatedAt?: string;
+  legacyRadiationRisk?: string;
+  [key: string]: unknown;
+}
+
+export interface RadiationPoint {
+  latDeg: number;
+  lonDeg: number;
+  altitudeKm?: number;
+  riskScore?: number;
+  level?: RadiationLevel;
+  cause?: RadiationMainCause;
+  timestamp?: string;
+}
+
+export interface RadiationZone {
+  id: string;
+  type: "auroral_curtain" | "particle_hotspot" | "solar_particle_wash" | string;
+  cause: RadiationMainCause;
+  level: RadiationLevel;
+  riskScore: number;
+  color: string;
+  opacity: number;
+  altitudeScale?: number;
+  widthDeg?: number;
+  thickness?: number;
+  pulseRate?: number;
+  points: RadiationPoint[];
+}
+
+export interface RadiationFluxCell {
+  latMinDeg: number;
+  latMaxDeg: number;
+  lonMinDeg: number;
+  lonMaxDeg: number;
+  log10Flux: number;
+  normalizedFlux: number;
+  color: string;
+}
+
+export interface RadiationVisualizationFrame {
+  id?: string;
+  index: number;
+  timestamp: string;
+  solarExposure?: number;
+  geomagneticStorm?: number;
+  fluxCells?: RadiationFluxCell[];
+  zones: RadiationZone[];
+}
+
+export interface RadiationVisualization {
+  mode: string;
+  generatedAt: string;
+  assetCount?: number;
+  refreshCadenceSeconds?: number;
+  loopDurationHours?: number;
+  frameStepMinutes?: number;
+  playbackSeconds?: number;
+  particleProduct?: {
+    style?: string;
+    channel?: string;
+    species?: string;
+    energy?: string;
+    detector?: string;
+    scale?: string;
+    grid?: {
+      latitudeStepDeg?: number;
+      longitudeStepDeg?: number;
+    };
+  };
+  liveImageAvailability?: {
+    exactPoesCylindricalImageFeed: boolean;
+    reason?: string;
+  };
+  note?: string;
+  latestAsset?: RadiationVisualizationFrame;
+  zones: RadiationZone[];
+  frames?: RadiationVisualizationFrame[];
+  trajectory: RadiationPoint[];
+}
+
+export interface RadiationRiskResponse {
+  generatedAt: string;
+  satelliteId: string | null;
+  radiationRisk: ProcessedRadiationRisk;
+}
+
 export interface DownlinkState {
   window_open: boolean;
   capacity_gb: number;

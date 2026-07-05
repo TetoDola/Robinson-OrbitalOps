@@ -7,6 +7,7 @@ import type {
   CommandsResponse,
   IncidentsResponse,
   MissionPatch,
+  RadiationRiskResponse,
   SimulatorInjectRequest,
   SimulatorInjectResponse,
   WorldStateResponse,
@@ -39,6 +40,10 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getWorldState(): Promise<WorldStateResponse> {
   return fetchJson<WorldStateResponse>("/world-state");
+}
+
+export function getRadiationRisk(): Promise<RadiationRiskResponse> {
+  return fetchJson<RadiationRiskResponse>("/radiation-risk");
 }
 
 export function getAgentsStatus(): Promise<AgentsStatusResponse> {
@@ -75,6 +80,18 @@ export async function approveMissionPatch(patchId: string): Promise<MissionPatch
     body: JSON.stringify({
       operator_id: "demo-operator",
       operator_note: "Approved from OrbitOps frontend",
+    }),
+  });
+
+  return response.mission_patch;
+}
+
+export async function rejectMissionPatch(patchId: string): Promise<MissionPatch> {
+  const response = await fetchJson<{ mission_patch: MissionPatch }>(`/mission-patches/${patchId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({
+      operator_id: "demo-operator",
+      operator_note: "Rejected from OrbitOps frontend",
     }),
   });
 

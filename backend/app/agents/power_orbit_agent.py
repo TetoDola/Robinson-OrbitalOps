@@ -66,7 +66,7 @@ async def run_once() -> AgentFinding | None:
             await emit_agent_status(
                 session,
                 agent_name="power_orbit_agent",
-                status="healthy",
+                status="monitoring",
                 phase="monitor",
                 severity="INFO",
                 message="Power and orbit state are within demo limits.",

@@ -135,7 +135,7 @@ def test_reset_demo_database_clears_stale_rows_and_restores_baseline() -> None:
     assert scenario.status == "paused"
     assert scenario.ended_at is None
     assert scenario.metadata_["next_tick"] == 0
-    assert all(row.status in {"monitoring", "healthy"} for row in session.rows[AgentStatus])
+    assert all(row.status == "monitoring" for row in session.rows[AgentStatus])
     assert payload["world_state"]["state"] == DEMO_BASELINE_WORLD_STATE
 
 

@@ -11,6 +11,7 @@ from app.config import settings
 
 
 NEMOTRON_OMNI_MODEL = "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B"
+MAX_MISSION_SUMMARY_CHARS = 900
 
 
 async def polish_mission_patch_summary(summary: str, context: dict) -> str:
@@ -45,7 +46,7 @@ async def polish_mission_patch_summary(summary: str, context: dict) -> str:
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     content = _message_content(response)
-    return content.strip() if content else summary
+    return _bounded_text(content, MAX_MISSION_SUMMARY_CHARS) if content else _bounded_text(summary, MAX_MISSION_SUMMARY_CHARS)
 
 
 async def analyze_thermal_ir_image(
@@ -100,7 +101,7 @@ async def analyze_thermal_ir_image(
         response_format={"type": "json_object"},
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
-    parsed = _parse_json_object(_message_content(response))
+    parsed = _parse_json_object(_message_content(response, include_reasoning=True))
     if not parsed:
         return None
     return _normalize_thermal_analysis(parsed)
@@ -140,7 +141,7 @@ async def _crusoe_chat_completion(
         return None
 
 
-def _message_content(response: dict[str, Any] | None) -> str:
+def _message_content(response: dict[str, Any] | None, *, include_reasoning: bool = False) -> str:
     if not response:
         return ""
     choices = response.get("choices") or []
@@ -151,7 +152,18 @@ def _message_content(response: dict[str, Any] | None) -> str:
         return content
     if isinstance(content, list):
         return "\n".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+    if include_reasoning:
+        reasoning = (choices[0].get("message") or {}).get("reasoning")
+        if isinstance(reasoning, str):
+            return reasoning
     return ""
+
+
+def _bounded_text(value: str, max_chars: int) -> str:
+    text = " ".join(value.split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
 
 
 def _parse_json_object(content: str) -> dict[str, Any] | None:

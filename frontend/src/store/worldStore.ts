@@ -10,6 +10,7 @@ import type {
   Command,
   Incident,
   MissionPatch,
+  ProcessedRadiationRisk,
   WorldState,
 } from "../types/backend";
 
@@ -28,6 +29,8 @@ export interface TelemetrySnapshot {
   solar: string;
   eclipse: string;
   radiation: string;
+  radiationExplanation?: string;
+  radiationRecommendedAction?: string;
   eccTrend: string;
   trustedCheckpoint: string;
   latestCheckpoint: string;
@@ -70,15 +73,29 @@ export interface WorkflowEventItem {
   status: "running" | "complete" | "blocked" | "info";
 }
 
+export interface AgentLogItem {
+  id: string;
+  agent: string;
+  time: string;
+  label: string;
+  detail: string;
+  status: WorkflowEventItem["status"];
+  eventType: string;
+  commandId?: string;
+  missionPatchId?: string;
+}
+
 interface WorldStore {
   worldState: WorldState | null;
   worldVersion: number | null;
   scenarioRunId: string | null;
   telemetry: TelemetrySnapshot;
+  radiationRisk: ProcessedRadiationRisk | null;
   agents: AgentStatusItem[];
   agentRuntime: AgentRuntimeItem[];
   aiStatus: AiStatusResponse | null;
   workflowEvents: WorkflowEventItem[];
+  agentLogs: Record<string, AgentLogItem[]>;
   agentFindings: AgentFinding[];
   incidents: Incident[];
   missionPatch: MissionPatch | null;
@@ -93,12 +110,14 @@ interface WorldStore {
   demoResetAt: string | null;
   setWorldState: (state: WorldState, version?: number | null, scenarioRunId?: string | null) => void;
   setTelemetry: (telemetry: TelemetrySnapshot) => void;
+  setRadiationRisk: (radiationRisk: ProcessedRadiationRisk | null) => void;
   setAgents: (agents: AgentStatusItem[]) => void;
   upsertAgent: (agent: AgentStatusItem) => void;
   setAgentRuntime: (agents: AgentRuntimeItem[]) => void;
   upsertAgentRuntime: (agent: AgentRuntimeItem) => void;
   setAiStatus: (aiStatus: AiStatusResponse | null) => void;
   pushWorkflowEvent: (event: WorkflowEventItem) => void;
+  pushAgentLog: (event: AgentLogItem) => void;
   setAgentFindings: (findings: AgentFinding[]) => void;
   upsertAgentFinding: (finding: AgentFinding) => void;
   setIncidents: (incidents: Incident[]) => void;
@@ -119,10 +138,12 @@ export const useWorldStore = create<WorldStore>()(
     worldVersion: null,
     scenarioRunId: null,
     telemetry: initialTelemetry,
+    radiationRisk: null,
     agents: [],
     agentRuntime: [],
     aiStatus: null,
     workflowEvents: [],
+    agentLogs: {},
     agentFindings: [],
     incidents: [],
     missionPatch: null,
@@ -138,6 +159,7 @@ export const useWorldStore = create<WorldStore>()(
     setWorldState: (worldState, worldVersion = null, scenarioRunId = null) =>
       set({ worldState, worldVersion, scenarioRunId }),
     setTelemetry: (telemetry) => set({ telemetry }),
+    setRadiationRisk: (radiationRisk) => set({ radiationRisk }),
     setAgents: (agents) => set({ agents }),
     upsertAgent: (agent) =>
       set((state) => {
@@ -154,6 +176,8 @@ export const useWorldStore = create<WorldStore>()(
     setAiStatus: (aiStatus) => set({ aiStatus }),
     pushWorkflowEvent: (event) =>
       set((state) => ({ workflowEvents: [event, ...state.workflowEvents].slice(0, 12) })),
+    pushAgentLog: (event) =>
+      set((state) => ({ agentLogs: appendAgentLogItem(state.agentLogs, event) })),
     setAgentFindings: (agentFindings) =>
       set({
         agentFindings: [...agentFindings].sort(
@@ -231,6 +255,17 @@ export const useWorldStore = create<WorldStore>()(
                   agent.status === "proposing" || agent.status === "analyzing" ? "running" : "info",
                 )
               : state.workflowEvents,
+            agentLogs: shouldLog
+              ? agentLogEntry(
+                  state.agentLogs,
+                  event,
+                  [agent.agent],
+                  "Status updated",
+                  `${agent.phase}: ${agent.message}`,
+                  agent.status === "proposing" || agent.status === "analyzing" ? "running" : "info",
+                  { dedupeKey: `${event.type}:${agent.agent}:${event.timestamp}` },
+                )
+              : state.agentLogs,
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -251,6 +286,15 @@ export const useWorldStore = create<WorldStore>()(
               `${finding.agent_name.replace(/_/g, " ")}: ${finding.finding}`,
               "complete",
             ),
+            agentLogs: agentLogEntry(
+              state.agentLogs,
+              event,
+              [finding.agent_name],
+              "Finding created",
+              finding.finding,
+              "complete",
+              { dedupeKey: `${event.type}:${finding.id}` },
+            ),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -268,6 +312,25 @@ export const useWorldStore = create<WorldStore>()(
             evidence?: Record<string, unknown> | Record<string, unknown>[];
             rollback_plan?: Record<string, unknown>;
           };
+          const patchAgents = patchPayloadAgents(payload, state);
+          let agentLogs = agentLogEntry(
+            state.agentLogs,
+            event,
+            ["commander_agent"],
+            "Mission patch generated",
+            payload.summary,
+            "running",
+            { dedupeKey: `${event.type}:${payload.id}:commander`, missionPatchId: payload.id },
+          );
+          agentLogs = agentLogEntry(
+            agentLogs,
+            event,
+            patchAgents,
+            "Patch handoff",
+            "Commander included this agent report in the approval package.",
+            "running",
+            { dedupeKey: `${event.type}:${payload.id}:handoff`, missionPatchId: payload.id },
+          );
           return {
             missionPatch: {
               id: payload.id,
@@ -282,6 +345,7 @@ export const useWorldStore = create<WorldStore>()(
             },
             patchMode: "pending",
             workflowEvents: workflowEntry(state.workflowEvents, event, "Mission patch", payload.summary, "running"),
+            agentLogs,
             lastEvent: event,
             lastEventAt: event.timestamp,
             demoResetAt: null,
@@ -295,6 +359,7 @@ export const useWorldStore = create<WorldStore>()(
             missionPatch: null,
             commands: [],
             workflowEvents: workflowEntry([], event, "Reset baseline", "All agents monitoring", "complete"),
+            agentLogs: resetAgentLogs(event, state.agents),
             patchMode: "pending",
             lastEvent: event,
             lastEventAt: event.timestamp,
@@ -304,6 +369,27 @@ export const useWorldStore = create<WorldStore>()(
 
         if (event.type === "mission_patch.approved" || event.type === "mission_patch.executing") {
           const payload = event.payload as { id: string; status: string };
+          const relatedAgents = activePatchAgentNames(state);
+          let agentLogs = agentLogEntry(
+            state.agentLogs,
+            event,
+            ["commander_agent"],
+            event.type === "mission_patch.executing" ? "Patch executing" : "Patch approved",
+            payload.status,
+            event.type === "mission_patch.executing" ? "running" : "complete",
+            { dedupeKey: `${event.type}:${payload.id}:commander`, missionPatchId: payload.id },
+          );
+          agentLogs = agentLogEntry(
+            agentLogs,
+            event,
+            relatedAgents,
+            "Approval state",
+            event.type === "mission_patch.executing"
+              ? "Executor is running commands from this agent's recommendations."
+              : "Human approval received for related controls.",
+            event.type === "mission_patch.executing" ? "running" : "complete",
+            { dedupeKey: `${event.type}:${payload.id}:agents`, missionPatchId: payload.id },
+          );
           return {
             missionPatch:
               state.missionPatch?.id === payload.id
@@ -311,6 +397,7 @@ export const useWorldStore = create<WorldStore>()(
                 : state.missionPatch,
             patchMode: event.type === "mission_patch.executing" ? "execute" : "execute",
             workflowEvents: workflowEntry(state.workflowEvents, event, "Mission patch approved", payload.status, "complete"),
+            agentLogs,
             lastEvent: event,
             lastEventAt: event.timestamp,
             demoResetAt: null,
@@ -319,6 +406,25 @@ export const useWorldStore = create<WorldStore>()(
 
         if (event.type === "mission_patch.rejected") {
           const payload = event.payload as { id: string; status: string };
+          const relatedAgents = activePatchAgentNames(state);
+          let agentLogs = agentLogEntry(
+            state.agentLogs,
+            event,
+            ["commander_agent"],
+            "Patch rejected",
+            payload.status,
+            "blocked",
+            { dedupeKey: `${event.type}:${payload.id}:commander`, missionPatchId: payload.id },
+          );
+          agentLogs = agentLogEntry(
+            agentLogs,
+            event,
+            relatedAgents,
+            "Approval state",
+            "Human rejected the related patch.",
+            "blocked",
+            { dedupeKey: `${event.type}:${payload.id}:agents`, missionPatchId: payload.id },
+          );
           return {
             missionPatch:
               state.missionPatch?.id === payload.id
@@ -326,15 +432,37 @@ export const useWorldStore = create<WorldStore>()(
                 : state.missionPatch,
             patchMode: "reject",
             workflowEvents: workflowEntry(state.workflowEvents, event, "Mission patch rejected", payload.status, "blocked"),
+            agentLogs,
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
         }
 
         if (event.type === "command.batch_created") {
+          const payload = event.payload as { mission_patch_id?: string; command_count?: number };
+          const relatedAgents = activePatchAgentNames(state);
+          let agentLogs = agentLogEntry(
+            state.agentLogs,
+            event,
+            ["commander_agent"],
+            "Commands queued",
+            `${payload.command_count ?? "approved"} executor command${payload.command_count === 1 ? "" : "s"} queued.`,
+            "running",
+            { dedupeKey: `${event.type}:${payload.mission_patch_id ?? event.timestamp}:commander`, missionPatchId: payload.mission_patch_id },
+          );
+          agentLogs = agentLogEntry(
+            agentLogs,
+            event,
+            relatedAgents,
+            "Commands queued",
+            "Executor queued controls related to this agent report.",
+            "running",
+            { dedupeKey: `${event.type}:${payload.mission_patch_id ?? event.timestamp}:agents`, missionPatchId: payload.mission_patch_id },
+          );
           return {
             patchMode: "execute",
             workflowEvents: workflowEntry(state.workflowEvents, event, "Commands queued", "Executor received approved patch", "running"),
+            agentLogs,
             lastEvent: event,
             lastEventAt: event.timestamp,
             demoResetAt: null,
@@ -348,10 +476,31 @@ export const useWorldStore = create<WorldStore>()(
             action_type: string;
             status: string;
           };
+          const relatedAgents = agentsForCommand(payload.action_type, state);
           return {
             commands: upsertCommand(payload),
             patchMode: "execute",
-            workflowEvents: workflowEntry(state.workflowEvents, event, "Command started", payload.action_type, "running"),
+            workflowEvents: workflowEntry(
+              state.workflowEvents,
+              event,
+              "Command started",
+              payload.action_type,
+              "running",
+              `${event.type}:${payload.id}`,
+            ),
+            agentLogs: agentLogEntry(
+              state.agentLogs,
+              event,
+              relatedAgents,
+              "Command started",
+              payload.action_type,
+              "running",
+              {
+                dedupeKey: `${event.type}:${payload.id}`,
+                commandId: payload.id,
+                missionPatchId: payload.mission_patch_id,
+              },
+            ),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -365,10 +514,31 @@ export const useWorldStore = create<WorldStore>()(
             status: string;
             result: Record<string, unknown>;
           };
+          const relatedAgents = agentsForCommand(payload.action_type, state);
           return {
             commands: upsertCommand(payload),
             patchMode: "verify",
-            workflowEvents: workflowEntry(state.workflowEvents, event, "Command succeeded", payload.action_type, "complete"),
+            workflowEvents: workflowEntry(
+              state.workflowEvents,
+              event,
+              "Command succeeded",
+              payload.action_type,
+              "complete",
+              `${event.type}:${payload.id}`,
+            ),
+            agentLogs: agentLogEntry(
+              state.agentLogs,
+              event,
+              relatedAgents,
+              "Command succeeded",
+              payload.action_type,
+              "complete",
+              {
+                dedupeKey: `${event.type}:${payload.id}`,
+                commandId: payload.id,
+                missionPatchId: payload.mission_patch_id,
+              },
+            ),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -376,6 +546,25 @@ export const useWorldStore = create<WorldStore>()(
 
         if (event.type === "verification.completed") {
           const payload = event.payload as { mission_patch_id: string; status: string };
+          const relatedAgents = activePatchAgentNames(state);
+          let agentLogs = agentLogEntry(
+            state.agentLogs,
+            event,
+            ["commander_agent"],
+            "Verification completed",
+            payload.status,
+            "complete",
+            { dedupeKey: `${event.type}:${payload.mission_patch_id}:commander`, missionPatchId: payload.mission_patch_id },
+          );
+          agentLogs = agentLogEntry(
+            agentLogs,
+            event,
+            relatedAgents,
+            "Verification completed",
+            "Executor verified the controls related to this agent report.",
+            "complete",
+            { dedupeKey: `${event.type}:${payload.mission_patch_id}:agents`, missionPatchId: payload.mission_patch_id },
+          );
           return {
             missionPatch:
               state.missionPatch?.id === payload.mission_patch_id
@@ -383,6 +572,7 @@ export const useWorldStore = create<WorldStore>()(
                 : state.missionPatch,
             patchMode: "verified",
             workflowEvents: workflowEntry(state.workflowEvents, event, "Verification complete", payload.status, "complete"),
+            agentLogs,
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -390,13 +580,24 @@ export const useWorldStore = create<WorldStore>()(
 
         if (event.type === "simulator.injected") {
           const payload = event.payload as { issue?: string };
+          const issue = String(payload.issue ?? "manual input");
+          const relatedAgents = agentsForInjectedIssue(issue);
           return {
             workflowEvents: workflowEntry(
               state.workflowEvents,
               event,
               "Simulation injected",
-              String(payload.issue ?? "manual input").replace(/-/g, " "),
+              issue.replace(/-/g, " "),
               "complete",
+            ),
+            agentLogs: agentLogEntry(
+              state.agentLogs,
+              event,
+              relatedAgents,
+              "Operator input",
+              issue.replace(/-/g, " "),
+              "complete",
+              { dedupeKey: `${event.type}:${issue}:${event.timestamp}` },
             ),
             lastEvent: event,
             lastEventAt: event.timestamp,
@@ -404,7 +605,7 @@ export const useWorldStore = create<WorldStore>()(
         }
 
         if (event.type === "thermal.image.analysis_completed") {
-          const payload = event.payload as { analysis_status?: string };
+          const payload = event.payload as { analysis_status?: string; image_id?: string; asset_id?: string };
           const blocked = String(payload.analysis_status ?? "").includes("blocked");
           return {
             workflowEvents: workflowEntry(
@@ -413,6 +614,15 @@ export const useWorldStore = create<WorldStore>()(
               "Thermal AI analysis",
               String(payload.analysis_status ?? "completed").replace(/_/g, " "),
               blocked ? "blocked" : "complete",
+            ),
+            agentLogs: agentLogEntry(
+              state.agentLogs,
+              event,
+              ["thermal_physical_agent"],
+              "Thermal AI analysis",
+              `${String(payload.analysis_status ?? "completed").replace(/_/g, " ")} on ${payload.asset_id ?? "thermal frame"}`,
+              blocked ? "blocked" : "complete",
+              { dedupeKey: `${event.type}:${payload.image_id ?? event.timestamp}` },
             ),
             lastEvent: event,
             lastEventAt: event.timestamp,
@@ -430,15 +640,135 @@ function workflowEntry(
   label: string,
   detail: string,
   status: WorkflowEventItem["status"],
+  dedupeKey?: string,
 ): WorkflowEventItem[] {
+  const id = dedupeKey ?? `${event.type}-${event.timestamp}-${label}`;
   return [
     {
-      id: `${event.type}-${event.timestamp}-${label}`,
+      id,
       time: event.timestamp,
       label,
       detail,
       status,
     },
-    ...existing,
+    ...existing.filter((item) => item.id !== id),
   ].slice(0, 12);
+}
+
+const KNOWN_AGENTS = [
+  "workload_agent",
+  "thermal_physical_agent",
+  "power_orbit_agent",
+  "radiation_integrity_agent",
+  "checkpoint_downlink_agent",
+  "vibration_health_agent",
+  "commander_agent",
+];
+
+const ISSUE_AGENT_MAP: Record<string, string[]> = {
+  "workload-stall": ["workload_agent"],
+  "thermal-frame": ["thermal_physical_agent"],
+  "eclipse-risk": ["power_orbit_agent"],
+  "radiation-spike": ["radiation_integrity_agent"],
+  "downlink-constraint": ["checkpoint_downlink_agent"],
+  "vibration-fault": ["vibration_health_agent"],
+};
+
+const ACTION_AGENT_FALLBACKS: Record<string, string[]> = {
+  mark_checkpoint_suspect: ["radiation_integrity_agent"],
+  rollback_training: ["radiation_integrity_agent", "workload_agent"],
+  cordon_node: ["radiation_integrity_agent", "thermal_physical_agent"],
+  mark_node_suspect: ["thermal_physical_agent", "vibration_health_agent"],
+  set_gpu_power_limit: ["thermal_physical_agent", "power_orbit_agent"],
+  increase_checkpoint_frequency: ["power_orbit_agent", "checkpoint_downlink_agent"],
+  transfer_priority: ["checkpoint_downlink_agent"],
+  snapshot_evidence: ["thermal_physical_agent", "vibration_health_agent", "radiation_integrity_agent"],
+  run_health_check: ["workload_agent", "thermal_physical_agent", "vibration_health_agent"],
+  pause_job: ["workload_agent"],
+};
+
+function appendAgentLogItem(existing: Record<string, AgentLogItem[]>, log: AgentLogItem): Record<string, AgentLogItem[]> {
+  return {
+    ...existing,
+    [log.agent]: [log, ...(existing[log.agent] ?? []).filter((item) => item.id !== log.id)].slice(0, 48),
+  };
+}
+
+function agentLogEntry(
+  existing: Record<string, AgentLogItem[]>,
+  event: BackendLiveEvent,
+  agents: string[],
+  label: string,
+  detail: string,
+  status: WorkflowEventItem["status"],
+  options: {
+    dedupeKey?: string;
+    commandId?: string;
+    missionPatchId?: string;
+  } = {},
+): Record<string, AgentLogItem[]> {
+  return uniqueAgents(agents).reduce((logs, agent) => {
+    const id = `${options.dedupeKey ?? `${event.type}:${event.timestamp}:${label}`}:${agent}`;
+    return appendAgentLogItem(logs, {
+      id,
+      agent,
+      time: event.timestamp,
+      label,
+      detail,
+      status,
+      eventType: event.type,
+      commandId: options.commandId,
+      missionPatchId: options.missionPatchId,
+    });
+  }, existing);
+}
+
+function resetAgentLogs(event: BackendLiveEvent, agents: AgentStatusItem[]): Record<string, AgentLogItem[]> {
+  const agentNames = agents.length ? agents.map((agent) => agent.agent) : KNOWN_AGENTS;
+  return agentLogEntry({}, event, agentNames, "Reset baseline", "Monitoring assigned domain.", "complete", {
+    dedupeKey: `${event.type}:${event.timestamp}`,
+  });
+}
+
+function agentsForInjectedIssue(issue: string): string[] {
+  return ISSUE_AGENT_MAP[issue] ?? ["commander_agent"];
+}
+
+function agentsForCommand(actionType: string, state: WorldStore): string[] {
+  const fromFindings = state.agentFindings
+    .filter((finding) => finding.recommended_actions.includes(actionType))
+    .map((finding) => finding.agent_name);
+  return fromFindings.length ? uniqueAgents(fromFindings) : (ACTION_AGENT_FALLBACKS[actionType] ?? ["commander_agent"]);
+}
+
+function activePatchAgentNames(state: WorldStore): string[] {
+  const fromPatch = state.missionPatch ? patchEvidenceAgentNames(state.missionPatch.evidence) : [];
+  if (fromPatch.length) {
+    return fromPatch;
+  }
+  return uniqueAgents(state.agentFindings.filter((finding) => finding.status === "open").map((finding) => finding.agent_name));
+}
+
+function patchPayloadAgents(
+  payload: { evidence?: Record<string, unknown> | Record<string, unknown>[] },
+  state: WorldStore,
+): string[] {
+  const fromEvidence = patchEvidenceAgentNames(payload.evidence ?? []);
+  if (fromEvidence.length) {
+    return fromEvidence;
+  }
+  return activePatchAgentNames(state);
+}
+
+function patchEvidenceAgentNames(evidence: Record<string, unknown> | Record<string, unknown>[]): string[] {
+  const items = Array.isArray(evidence) ? evidence : [evidence];
+  return uniqueAgents(
+    items
+      .map((item) => item?.agent)
+      .filter((agent): agent is string => typeof agent === "string" && agent.length > 0),
+  );
+}
+
+function uniqueAgents(agents: string[]): string[] {
+  return [...new Set(agents.filter((agent) => typeof agent === "string" && agent.length > 0))];
 }

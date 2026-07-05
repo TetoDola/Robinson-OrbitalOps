@@ -715,6 +715,8 @@ button:focus-visible,
 .agent-workflow,
 .agent-action-list,
 .agent-history,
+.agent-live-log,
+.agent-command-approval-list,
 .agent-evidence-grid ul {
   margin: 9px 0 0;
   padding: 0;
@@ -816,6 +818,70 @@ button:focus-visible,
   font-weight: 700;
 }
 
+.agent-approval-section {
+  border-color: oklch(76% 0.13 73 / 0.28);
+  background:
+    linear-gradient(180deg, oklch(76% 0.13 73 / 0.06), transparent 72%),
+    oklch(8% 0.016 146 / 0.32);
+}
+
+.agent-command-approval-list {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-command-approval-list li {
+  display: grid;
+  min-height: 38px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.agent-command-approval-list strong {
+  margin-bottom: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.agent-approval-note {
+  margin-top: 8px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.agent-approval-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.agent-approval-buttons button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: oklch(91% 0.025 88 / 0.035);
+  cursor: pointer;
+}
+
+.agent-approval-buttons button:first-child {
+  color: oklch(18% 0.02 73);
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.agent-approval-buttons button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .agent-history {
   display: grid;
   gap: 7px;
@@ -835,6 +901,59 @@ button:focus-visible,
   color: var(--dim);
   font-family: var(--mono);
   font-size: 10px;
+}
+
+.agent-live-log {
+  display: grid;
+  gap: 0;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: oklch(4% 0.012 146 / 0.36);
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.agent-live-log li {
+  display: grid;
+  grid-template-columns: 76px 126px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.agent-live-log li:first-child {
+  border-top: 0;
+}
+
+.agent-live-log time,
+.agent-live-log strong,
+.agent-live-log b {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-live-log time {
+  color: var(--dim);
+}
+
+.agent-live-log strong {
+  color: var(--text);
+}
+
+.agent-live-log span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thermal-frame-section img {
@@ -1473,6 +1592,19 @@ button:focus-visible,
 
   .agent-history li {
     grid-template-columns: 62px minmax(0, 1fr);
+  }
+
+  .agent-live-log li {
+    grid-template-columns: 62px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .agent-live-log b {
+    justify-self: start;
+  }
+
+  .agent-live-log span {
+    white-space: normal;
   }
 
   .agent-history li b {

@@ -5,7 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-import { approveMissionPatch } from "../api/client";
+import { approveMissionPatch, rejectMissionPatch } from "../api/client";
 import { useWorldStore, type PatchMode } from "../store/worldStore";
 import type { Incident, MissionPatchAction, NodeState } from "../types/backend";
 import AgentStatus from "./AgentStatus";
@@ -226,6 +226,7 @@ export default function MissionPatchPanel() {
   const approvalMode = resetIdle ? "Monitoring" : "Human approval";
   const statusLabel = resetIdle ? "MONITORING" : patchStateLabel(patchMode, missionPatch?.status);
   const statusClass = resetIdle ? "status-green" : patchStateClass(patchMode);
+  const canDecidePatch = missionPatch?.status === "pending_approval";
 
   async function approvePatch() {
     setPatchMode("execute");
@@ -233,6 +234,18 @@ export default function MissionPatchPanel() {
 
     try {
       const updatedPatch = await approveMissionPatch(missionPatch.id);
+      setMissionPatch(updatedPatch);
+    } catch {
+      setPatchMode("pending");
+    }
+  }
+
+  async function rejectPatch() {
+    setPatchMode("reject");
+    if (!missionPatch) return;
+
+    try {
+      const updatedPatch = await rejectMissionPatch(missionPatch.id);
       setMissionPatch(updatedPatch);
     } catch {
       setPatchMode("pending");
@@ -298,7 +311,7 @@ export default function MissionPatchPanel() {
           </div>
         ) : (
           <div className="patch-buttons">
-            <button className="patch-btn primary" onClick={() => void approvePatch()} type="button">
+            <button className="patch-btn primary" disabled={!canDecidePatch} onClick={() => void approvePatch()} type="button">
               Approve
             </button>
             <button className="patch-btn" onClick={() => setPatchMode("replan")} type="button">
@@ -307,7 +320,7 @@ export default function MissionPatchPanel() {
             <button className="patch-btn" onClick={() => setPatchMode("modify")} type="button">
               Modify
             </button>
-            <button className="patch-btn danger" onClick={() => setPatchMode("reject")} type="button">
+            <button className="patch-btn danger" disabled={!canDecidePatch} onClick={() => void rejectPatch()} type="button">
               Reject
             </button>
           </div>

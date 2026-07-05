@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import uuid
+import base64
+import struct
+import zlib
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -29,22 +32,6 @@ from app.schemas.simulator import SimulatorInjectRequest, SimulatorInjectRespons
 
 
 FindingBuilder = Callable[[dict[str, Any]], dict[str, Any] | None]
-
-SAMPLE_THERMAL_IMAGE_DATA_URL = (
-    "data:image/svg+xml;utf8,"
-    "%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='180'%20viewBox='0%200%20320%20180'%3E"
-    "%3Crect%20width='320'%20height='180'%20fill='%23050a12'/%3E"
-    "%3Crect%20x='32'%20y='24'%20width='256'%20height='132'%20rx='8'%20fill='%2313212d'/%3E"
-    "%3Cg%20opacity='0.9'%3E"
-    "%3Ccircle%20cx='206'%20cy='88'%20r='52'%20fill='%23ff2d1b'/%3E"
-    "%3Ccircle%20cx='206'%20cy='88'%20r='32'%20fill='%23ffd166'/%3E"
-    "%3Ccircle%20cx='120'%20cy='96'%20r='34'%20fill='%232bb8ff'/%3E"
-    "%3C/g%3E"
-    "%3Cpath%20d='M48%20144H272'%20stroke='%2389a3b6'%20stroke-width='3'%20stroke-dasharray='8%2010'/%3E"
-    "%3Ctext%20x='32'%20y='20'%20fill='%23d9f2ff'%20font-size='12'%20font-family='monospace'%3EIR%20FRAME%20NODE-C%3C/text%3E"
-    "%3C/svg%3E"
-)
-
 
 ISSUE_AGENTS: dict[str, tuple[str, str, list[FindingBuilder]]] = {
     "workload-stall": (
@@ -131,7 +118,7 @@ async def inject_named_issue(issue: str, request: SimulatorInjectRequest) -> Sim
 async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInjectResponse:
     timestamp = datetime.now(timezone.utc)
     image_id = str(uuid.uuid4())
-    image_data_url = request.image_data_url or SAMPLE_THERMAL_IMAGE_DATA_URL
+    image_data_url = request.image_data_url or _sample_thermal_png_data_url()
     latest_input = {
         "id": image_id,
         "asset_id": request.asset_id or "node-c",
@@ -428,3 +415,34 @@ def _dedupe(values: list[Any]) -> list[str]:
         seen.add(value)
         deduped.append(value)
     return deduped
+
+
+def _sample_thermal_png_data_url() -> str:
+    """Generate a small valid PNG heat-map so multimodal APIs accept the sample."""
+    width = 96
+    height = 64
+    rows: list[bytes] = []
+    for y in range(height):
+        row = bytearray([0])
+        for x in range(width):
+            hot = (x - 62) ** 2 + (y - 30) ** 2 < 520
+            warm = (x - 34) ** 2 + (y - 36) ** 2 < 320
+            if hot:
+                row.extend([255, 67, 28])
+            elif warm:
+                row.extend([43, 184, 255])
+            else:
+                row.extend([8, 16, 27])
+        rows.append(bytes(row))
+    raw = b"".join(rows)
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(raw, 9))
+        + _png_chunk(b"IEND", b"")
+    )
+    return "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
+
+
+def _png_chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)

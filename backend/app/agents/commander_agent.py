@@ -128,6 +128,17 @@ async def build_commander_patch() -> MissionPatch | None:
         incident = await _get_or_create_incident(session, findings, severity, status="detected")
         existing_patch = await _active_patch_for_incident(session, incident.id)
         if existing_patch is not None:
+            if existing_patch.status == "pending_approval":
+                await emit_agent_status(
+                    session,
+                    agent_name="commander_agent",
+                    status="awaiting_approval",
+                    phase="approve",
+                    severity=existing_patch.severity,
+                    message="Mission patch is waiting for human approval.",
+                    linked_incident_id=incident.id,
+                    linked_mission_patch_id=existing_patch.id,
+                )
             await session.commit()
             return existing_patch
 
@@ -153,6 +164,28 @@ async def build_commander_patch() -> MissionPatch | None:
             approval_required=safety.approval_required,
         )
         session.add(patch)
+        await session.flush()
+        await emit_agent_status(
+            session,
+            agent_name="commander_agent",
+            status="awaiting_approval",
+            phase="approve",
+            severity=severity,
+            message="Mission patch is waiting for human approval.",
+            linked_incident_id=incident.id,
+            linked_mission_patch_id=patch.id,
+        )
+        for agent_name in sorted({finding.agent_name for finding in findings}):
+            await emit_agent_status(
+                session,
+                agent_name=agent_name,
+                status="awaiting_approval",
+                phase="approve",
+                severity=severity,
+                message="Related recommendation is waiting for Mission Patch approval.",
+                linked_incident_id=incident.id,
+                linked_mission_patch_id=patch.id,
+            )
         created_patch = True
         await session.commit()
         await session.refresh(patch)
