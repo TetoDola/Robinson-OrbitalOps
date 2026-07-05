@@ -68,6 +68,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
+      LOCAL_GPU_TELEMETRY_ENABLED: ${LOCAL_GPU_TELEMETRY_ENABLED:-false}
+      LOCAL_GPU_NODE_ID: ${LOCAL_GPU_NODE_ID:-node-local}
+      LOCAL_GPU_ASSET_ID: ${LOCAL_GPU_ASSET_ID:-gpu-local-0}
     depends_on:
       orbitops-api:
         condition: service_healthy

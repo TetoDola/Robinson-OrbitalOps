@@ -30,6 +30,9 @@ class Settings(BaseSettings):
 
     world_state_seed_version: int = 1
     websocket_heartbeat_seconds: float = 5.0
+    local_gpu_telemetry_enabled: bool = False
+    local_gpu_node_id: str = "node-local"
+    local_gpu_asset_id: str = "gpu-local-0"
 
     model_config = SettingsConfigDict(
         env_prefix="",

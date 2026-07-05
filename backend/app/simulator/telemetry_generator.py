@@ -5,11 +5,17 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+from app.config import settings
 from app.constants import DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID, StreamName
 from app.db.models import ScenarioRun, TelemetryEvent
 from app.db.session import session_context
 from app.services.bootstrap import wait_for_database_ready, wait_for_redis_ready
 from app.services.event_bus import publish_stream_event
+from app.services.local_gpu_telemetry import (
+    build_local_gpu_event,
+    gpu_world_state_patch,
+    read_nvidia_smi_snapshot,
+)
 from app.services.world_state import write_world_state
 from app.simulator.scenarios import DEFAULT_TICK_SECONDS
 from app.simulator.state_machine import build_simulated_state, build_telemetry_payload
@@ -18,6 +24,14 @@ from app.simulator.state_machine import build_simulated_state, build_telemetry_p
 async def run_simulator_tick(tick: int) -> dict:
     state = build_simulated_state(tick)
     payload = build_telemetry_payload(state)
+    local_snapshot = None
+    if settings.local_gpu_telemetry_enabled:
+        local_snapshot = await asyncio.to_thread(
+            read_nvidia_smi_snapshot,
+            node_id=settings.local_gpu_node_id,
+            asset_id=settings.local_gpu_asset_id,
+        )
+
     event = {
         "type": "telemetry.received",
         "event_type": "simulator.tick",
@@ -35,6 +49,19 @@ async def run_simulator_tick(tick: int) -> dict:
             updated_by="orbitops-simulator",
             reason="simulator_tick",
         )
+        local_event: dict | None = None
+        if local_snapshot is not None:
+            world_state = await write_world_state(
+                session,
+                gpu_world_state_patch(local_snapshot),
+                updated_by="orbitops-local-gpu",
+                reason="local_gpu_telemetry",
+            )
+            local_event = build_local_gpu_event(
+                local_snapshot,
+                world_state_version=world_state.version,
+            )
+
         session.add(
             TelemetryEvent(
                 scenario_run_id=DEMO_SCENARIO_RUN_ID,
@@ -44,10 +71,23 @@ async def run_simulator_tick(tick: int) -> dict:
                 payload=payload,
             )
         )
+        if local_event is not None:
+            session.add(
+                TelemetryEvent(
+                    scenario_run_id=DEMO_SCENARIO_RUN_ID,
+                    event_type="local_gpu.telemetry",
+                    asset_id=local_snapshot["asset_id"] if local_snapshot else None,
+                    severity="INFO",
+                    payload=local_event["payload"],
+                )
+            )
         await session.commit()
-        event["world_state_version"] = world_state.version
+
+    event["world_state_version"] = world_state.version
 
     await publish_stream_event(StreamName.telemetry_events.value, event)
+    if local_event is not None:
+        await publish_stream_event(StreamName.telemetry_events.value, local_event)
     await publish_stream_event(
         StreamName.ui_events.value,
         {
@@ -56,10 +96,12 @@ async def run_simulator_tick(tick: int) -> dict:
             "payload": {
                 "version": event["world_state_version"],
                 "scenario_run_id": DEMO_SCENARIO_RUN_ID,
-                "state": state,
+                "state": world_state.state,
             },
         },
     )
+    if local_event is not None:
+        await publish_stream_event(StreamName.ui_events.value, local_event)
     return event
 
 
