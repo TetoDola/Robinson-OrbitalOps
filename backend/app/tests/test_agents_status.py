@@ -60,8 +60,12 @@ def test_agents_runtime_shape() -> None:
     response = asyncio.run(list_agent_runtime(_Session()))
     assert isinstance(response, AgentsRuntimeResponse)
     assert len(response.agents) == len(AGENT_SEED_STATUS)
-    assert all(agent.interval_seconds == 120 for agent in response.agents)
-    assert {agent.trigger_mode for agent in response.agents} == {"interval"}
+    assert all(agent.interval_seconds == 10 for agent in response.agents)
+    assert all(agent.heartbeat_seconds == 10 for agent in response.agents)
+    assert {agent.trigger_mode for agent in response.agents} == {"runtime_change", "finding_event"}
+    assert next(agent for agent in response.agents if agent.agent == "commander_agent").trigger_mode == "finding_event"
+    assert all(agent.trigger_condition for agent in response.agents)
+    assert all(agent.watched_fields for agent in response.agents)
 
 
 class _FindingSession:

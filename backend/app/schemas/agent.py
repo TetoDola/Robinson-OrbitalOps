@@ -45,12 +45,16 @@ class AgentRuntimeItem(BaseModel):
     agent: str
     display_name: str
     trigger_mode: str
+    trigger_condition: str
+    watched_fields: list[str] = Field(default_factory=list)
     interval_seconds: int
+    heartbeat_seconds: int
     run_state: str
     last_run_at: datetime
     next_run_at: datetime
     seconds_until_next_run: int
     missed_runs: int
+    last_triggered_by: str
     last_result: str
 
 

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from app.db.models import Command, MissionPatch, OutboxEvent
+from app.db.models import AgentStatus, Command, MissionPatch, OutboxEvent
 from app.services.command_executor import (
     execute_commands_in_session,
     execute_queued_commands_once,
@@ -41,6 +41,9 @@ class _FakeExecutorSession:
         return False
 
     async def execute(self, statement):
+        descriptions = getattr(statement, "column_descriptions", [])
+        if descriptions and descriptions[0].get("entity") is AgentStatus:
+            return _Result([])
         params = statement.compile().params
         mission_patch_id = next((value for key, value in params.items() if key.startswith("mission_patch_id")), None)
         commands = [command for command in self.commands if command.status == "queued"]

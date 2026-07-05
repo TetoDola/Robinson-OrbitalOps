@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import DEMO_SCENARIO_RUN_ID, StreamName
-from app.db.models import Approval, Command, Incident, MissionPatch
+from app.db.models import AgentFinding, AgentStatus, Approval, Command, Incident, MissionPatch
 from app.db.session import get_session
 from app.services.outbox import enqueue_outbox_event, publish_outbox_events_by_keys
 
@@ -139,6 +139,7 @@ async def approve_patch_transaction(
 
     patch.status = "approved"
     patch.updated_at = datetime.now(timezone.utc)
+    await _sync_agent_statuses_for_decision(session, patch.id, decision="approved")
 
     commands = []
     created_commands = 0
@@ -164,6 +165,7 @@ async def approve_patch_transaction(
 
     if created_approval or created_commands:
         command_event_key = f"outbox:{patch.id}:command.batch_created"
+        ui_command_event_key = f"outbox:{patch.id}:command.batch_created:ui_events"
         approval_event_key = f"outbox:{patch.id}:mission_patch.approved"
         await enqueue_outbox_event(
             session,
@@ -175,11 +177,18 @@ async def approve_patch_transaction(
         await enqueue_outbox_event(
             session,
             stream=StreamName.ui_events.value,
+            event_type="command.batch_created",
+            payload={"mission_patch_id": patch.id, "command_count": len(commands)},
+            idempotency_key=ui_command_event_key,
+        )
+        await enqueue_outbox_event(
+            session,
+            stream=StreamName.ui_events.value,
             event_type="mission_patch.approved",
             payload={"id": patch.id, "status": "approved"},
             idempotency_key=approval_event_key,
         )
-        outbox_keys.extend([command_event_key, approval_event_key])
+        outbox_keys.extend([command_event_key, ui_command_event_key, approval_event_key])
 
     await session.commit()
     return patch, created_approval, created_commands, commands, outbox_keys
@@ -222,11 +231,21 @@ async def reject_patch_transaction(
 
     patch.status = "rejected"
     patch.updated_at = datetime.now(timezone.utc)
+    await _sync_agent_statuses_for_decision(session, patch.id, decision="rejected")
     if patch.incident_id:
         incident = await session.get(Incident, patch.incident_id)
         if incident is not None:
             incident.status = "rejected"
             incident.updated_at = datetime.now(timezone.utc)
+            # Close the grouped findings so the Commander does not immediately
+            # re-propose an identical patch from the same open findings.
+            if incident.finding_ids:
+                findings_result = await session.execute(
+                    select(AgentFinding).where(AgentFinding.id.in_(incident.finding_ids))
+                )
+                for finding in findings_result.scalars().all():
+                    if finding.status == "open":
+                        finding.status = "rejected"
     rejection_event_key = f"outbox:{patch.id}:mission_patch.rejected"
     await enqueue_outbox_event(
         session,
@@ -238,6 +257,41 @@ async def reject_patch_transaction(
     outbox_keys.append(rejection_event_key)
     await session.commit()
     return patch, created_rejection, outbox_keys
+
+
+async def _sync_agent_statuses_for_decision(session: AsyncSession, patch_id: str, *, decision: str) -> None:
+    """Move agents out of awaiting_approval once the human has decided.
+
+    Without this, the heartbeat re-emits the stale awaiting_approval row
+    forever and the UI shows an approval that no longer exists.
+    """
+    result = await session.execute(select(AgentStatus).where(AgentStatus.linked_mission_patch_id == patch_id))
+    now = datetime.now(timezone.utc)
+    for row in result.scalars().all():
+        if row.status != "awaiting_approval":
+            continue
+        is_commander = row.agent == "commander_agent"
+        if decision == "approved":
+            row.status = "monitoring"
+            row.phase = "monitor"
+            row.severity = "INFO"
+            row.message = (
+                "Mission patch approved; executor is running the command set."
+                if is_commander
+                else "Approval received; related controls are executing."
+            )
+        else:
+            row.status = "monitoring"
+            row.phase = "monitor"
+            row.severity = "INFO"
+            row.message = (
+                "Operator rejected the mission patch; monitoring for new findings."
+                if is_commander
+                else "Operator rejected the related mission patch; monitoring baseline."
+            )
+            row.linked_mission_patch_id = None
+        row.updated_by = "approval_flow"
+        row.updated_at = now
 
 
 async def _locked_patch(session: AsyncSession, patch_id: str) -> MissionPatch:

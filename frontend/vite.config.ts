@@ -11,6 +11,7 @@ export default defineConfig({
     proxy: {
       "/world-state": apiTarget,
       "/agents": apiTarget,
+      "/chat": apiTarget,
       "/commands": apiTarget,
       "/incidents": apiTarget,
       "/mission-patches": apiTarget,

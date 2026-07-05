@@ -4,9 +4,11 @@ import type {
   AgentFindingsResponse,
   AgentsRuntimeResponse,
   AgentsStatusResponse,
+  ChatTurn,
   CommandsResponse,
   IncidentsResponse,
   MissionPatch,
+  OperatorChatResponse,
   RadiationRiskResponse,
   SimulatorInjectRequest,
   SimulatorInjectResponse,
@@ -56,6 +58,13 @@ export function getAgentsRuntime(): Promise<AgentsRuntimeResponse> {
 
 export function getAiStatus(): Promise<AiStatusResponse> {
   return fetchJson<AiStatusResponse>("/agents/ai-status");
+}
+
+export function sendChatMessage(message: string, history: ChatTurn[] = []): Promise<OperatorChatResponse> {
+  return fetchJson<OperatorChatResponse>("/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
 }
 
 export function getAgentFindings(): Promise<AgentFindingsResponse> {

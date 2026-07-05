@@ -463,8 +463,16 @@ def compute_radiation_risk(world_state: dict[str, Any], generated_at: str, envir
             "integrityEvents": round(integrity, 3),
         },
         "inputs": {
-            "position": satellite,
-            "radiationState": world_state.get("radiation"),
+            # Snapshot mutable world-state dicts: enrich_agent_world_state assigns this
+            # result back into state["radiation"], so live references would create a
+            # radiation -> computed_risk -> inputs -> radiationState cycle that breaks
+            # json.dumps in agent prompts and event publishing.
+            "position": dict(satellite),
+            "radiationState": {
+                key: value
+                for key, value in (world_state.get("radiation") or {}).items()
+                if key != "computed_risk"
+            },
             "solarWind": environment.get("solarWind"),
             "xrayFluxWattsM2": environment.get("xrayFluxWattsM2"),
             "protonFluxPfu": environment.get("protonFluxPfu"),

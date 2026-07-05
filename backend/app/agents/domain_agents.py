@@ -8,12 +8,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.config import settings
 from app.constants import DEMO_SCENARIO_RUN_ID, StreamName
 from app.db.models import AgentFinding, AgentStatus
 from app.db.session import session_context
 from app.agents.data_context import read_current_agent_state
 from app.services.agent_status import emit_agent_status
 from app.services.event_bus import publish_stream_event
+from app.services.llm_client import analyze_agent_finding
 
 
 def build_workload_finding(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -123,6 +125,24 @@ AGENT_BUILDERS = [
     build_vibration_finding,
 ]
 
+AGENT_BUILDER_NAMES = {
+    build_workload_finding: "workload_agent",
+    build_thermal_finding: "thermal_physical_agent",
+    build_radiation_finding: "radiation_integrity_agent",
+    build_checkpoint_downlink_finding: "checkpoint_downlink_agent",
+    build_vibration_finding: "vibration_health_agent",
+}
+
+AGENT_HEALTHY_MESSAGES = {
+    "workload_agent": "Analyzed scheduler, GPU utilization, and rank lag; no workload anomaly requires action.",
+    "thermal_physical_agent": "Analyzed temperature, hotspot, cooling, and vibration inputs; thermal envelope is nominal.",
+    "power_orbit_agent": "Analyzed battery, solar, eclipse, and checkpoint inputs; no power/orbit action is required.",
+    "radiation_integrity_agent": "Analyzed ECC, Xid, checkpoint trust, and radiation model; no integrity action is required.",
+    "checkpoint_downlink_agent": "Analyzed checkpoint size and downlink capacity; recovery artifacts fit current constraints.",
+    "vibration_health_agent": "Analyzed vibration and thermal correlation; no cooling-loop intervention is required.",
+    "commander_agent": "Watching domain findings and mission patch state for grouping work.",
+}
+
 PHASE4_AGENT_NAMES = [
     "workload_agent",
     "thermal_physical_agent",
@@ -131,20 +151,145 @@ PHASE4_AGENT_NAMES = [
     "vibration_health_agent",
 ]
 
+RUNTIME_HEARTBEAT_AGENT_NAMES = [
+    "workload_agent",
+    "thermal_physical_agent",
+    "power_orbit_agent",
+    "radiation_integrity_agent",
+    "checkpoint_downlink_agent",
+    "vibration_health_agent",
+    "commander_agent",
+]
+
 
 async def run_remaining_agents_once(state: dict[str, Any] | None = None) -> list[AgentFinding]:
     agent_state = state if state is not None else await read_current_agent_state()
     if agent_state is None:
         return []
-    payloads = [payload for builder in AGENT_BUILDERS if (payload := builder(agent_state)) is not None]
 
     findings: list[AgentFinding] = []
-    for payload in payloads:
+    for builder in AGENT_BUILDERS:
+        agent_name = AGENT_BUILDER_NAMES[builder]
+        await _emit_analysis_started(agent_name)
+        payload = builder(agent_state)
+        if payload is None:
+            await _emit_analysis_clear(agent_name)
+            continue
+        # Skip the model call and insert when this signature was already
+        # reported (open) or decided by the operator (rejected/resolved).
+        existing = await _existing_finding(payload)
+        if existing is not None:
+            await _emit_duplicate_suppressed(agent_name, payload, existing)
+            continue
+        if _agent_analysis_enabled():
+            await _emit_model_request(agent_name)
+        payload, analysis = await _apply_agent_analysis(agent_state, payload)
+        if analysis:
+            await _emit_model_reply(agent_name, analysis)
+        elif _agent_analysis_enabled():
+            await _emit_model_fallback(agent_name)
         finding = await _persist_finding(payload)
         if finding is not None:
             findings.append(finding)
             await _publish_finding(finding, payload)
     return findings
+
+
+async def _emit_analysis_started(agent_name: str) -> None:
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name=agent_name,
+            status="analyzing",
+            phase="detect",
+            severity="INFO",
+            message=f"Commander dispatch received; {_simple_trigger_message(agent_name)}",
+        )
+        await session.commit()
+
+
+async def _emit_analysis_clear(agent_name: str) -> None:
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name=agent_name,
+            status="monitoring",
+            phase="monitor",
+            severity="INFO",
+            message=AGENT_HEALTHY_MESSAGES.get(agent_name, "Analyzed runtime data; no action is required."),
+        )
+        await session.commit()
+
+
+async def _emit_model_request(agent_name: str) -> None:
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name=agent_name,
+            status="analyzing",
+            phase="model",
+            severity="INFO",
+            message=f"Sending gathered details to {settings.crusoe_model}.",
+        )
+        await session.commit()
+
+
+async def _emit_model_reply(agent_name: str, analysis: dict[str, Any]) -> None:
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name=agent_name,
+            status="analyzing",
+            phase="model",
+            severity="INFO",
+            message=(
+                f"{settings.crusoe_model} replied in {_latency_seconds(analysis.get('latency_ms'))}; "
+                "sending analyzed finding to Commander."
+            ),
+        )
+        await session.commit()
+
+
+async def _emit_model_fallback(agent_name: str) -> None:
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name=agent_name,
+            status="analyzing",
+            phase="model",
+            severity="INFO",
+            message="Model advisory did not return; using deterministic agent evidence.",
+        )
+        await session.commit()
+
+
+async def _apply_agent_analysis(state: dict[str, Any], payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    analysis = await analyze_agent_finding(
+        agent_name=payload["agent_name"],
+        state=state,
+        finding=payload,
+    )
+    if not analysis:
+        return payload, None
+
+    evidence = list(payload["evidence"])
+    if analysis.get("summary"):
+        evidence.append(f"Crusoe advisory summary: {analysis['summary']}")
+    evidence.extend(f"Crusoe evidence: {item}" for item in analysis.get("evidence", []))
+    if analysis.get("latency_ms") is not None:
+        evidence.append(f"{settings.crusoe_model} replied in {_latency_seconds(analysis['latency_ms'])}.")
+    recommended_actions = _dedupe_strings([*payload["recommended_actions"], *analysis.get("recommended_actions", [])])
+    confidence = analysis.get("confidence")
+    return (
+        {
+            **payload,
+            "confidence": max(payload["confidence"], confidence) if isinstance(confidence, float) else payload["confidence"],
+            "evidence": _dedupe_strings(evidence),
+            "risk": analysis.get("risk") or payload["risk"],
+            "recommended_actions": recommended_actions,
+        },
+        analysis,
+    )
 
 
 async def _persist_finding(payload: dict[str, Any]) -> AgentFinding | None:
@@ -155,10 +300,10 @@ async def _persist_finding(payload: dict[str, Any]) -> AgentFinding | None:
         await emit_agent_status(
             session,
             agent_name=payload["agent_name"],
-            status="detecting",
-            phase="detect",
+            status="explaining",
+            phase="explain",
             severity=payload["severity"],
-            message=payload["finding"],
+            message="Building report from telemetry, evidence, and model analysis.",
         )
         await session.commit()
 
@@ -182,7 +327,7 @@ async def _persist_finding(payload: dict[str, Any]) -> AgentFinding | None:
             status="proposing",
             phase="propose",
             severity=payload["severity"],
-            message="Finding proposed to Commander.",
+            message="Finding sent to Commander.",
             linked_finding_id=finding.id,
         )
         await session.commit()
@@ -190,16 +335,48 @@ async def _persist_finding(payload: dict[str, Any]) -> AgentFinding | None:
 
 
 async def find_existing_open_finding(session, payload: dict[str, Any]) -> AgentFinding | None:
+    """Match any prior finding with this signature regardless of status.
+
+    The unique constraint spans all statuses, so a rejected or resolved
+    finding also blocks re-creation until the demo reset clears the table.
+    """
     existing_result = await session.execute(
         select(AgentFinding).where(
             AgentFinding.scenario_run_id == DEMO_SCENARIO_RUN_ID,
             AgentFinding.agent_name == payload["agent_name"],
             AgentFinding.finding_signature == payload["finding_signature"],
             AgentFinding.scenario_time_bucket == payload["scenario_time_bucket"],
-            AgentFinding.status == "open",
         )
     )
     return existing_result.scalar_one_or_none()
+
+
+async def _existing_finding(payload: dict[str, Any]) -> AgentFinding | None:
+    async with session_context() as session:
+        return await find_existing_open_finding(session, payload)
+
+
+async def _emit_duplicate_suppressed(agent_name: str, payload: dict[str, Any], existing: AgentFinding) -> None:
+    if existing.status == "open":
+        status, phase, severity = "proposing", "propose", payload["severity"]
+        message = "Finding already reported; awaiting Commander grouping and approval outcome."
+    elif existing.status == "rejected":
+        status, phase, severity = "monitoring", "monitor", "INFO"
+        message = "Operator rejected the related mission patch; suppressing repeat of the same finding."
+    else:
+        status, phase, severity = "monitoring", "monitor", "INFO"
+        message = "Previously reported finding was resolved; monitoring for new changes."
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name=agent_name,
+            status=status,
+            phase=phase,
+            severity=severity,
+            message=message,
+            linked_finding_id=existing.id,
+        )
+        await session.commit()
 
 
 async def _publish_finding(finding: AgentFinding, payload: dict[str, Any]) -> None:
@@ -213,7 +390,7 @@ async def _publish_finding(finding: AgentFinding, payload: dict[str, Any]) -> No
 
 
 async def emit_phase4_heartbeats_once() -> None:
-    for agent_name in PHASE4_AGENT_NAMES:
+    for agent_name in RUNTIME_HEARTBEAT_AGENT_NAMES:
         async with session_context() as session:
             status_result = await session.execute(select(AgentStatus).where(AgentStatus.agent == agent_name))
             current = status_result.scalar_one_or_none()
@@ -268,6 +445,29 @@ def _finding(
         "finding_signature": signature,
         "scenario_time_bucket": "phase4-demo",
     }
+
+
+def _agent_analysis_enabled() -> bool:
+    return bool(settings.crusoe_enabled and settings.crusoe_api_key and settings.crusoe_agent_analysis_enabled)
+
+
+def _simple_trigger_message(agent_name: str) -> str:
+    messages = {
+        "workload_agent": "workload signal detected; gathering GPU utilization, rank lag, and training state.",
+        "thermal_physical_agent": "high temperature detected; gathering thermal, cooling, vibration, and visual data.",
+        "radiation_integrity_agent": "radiation/integrity signal detected; gathering ECC, Xid, loss, and checkpoint data.",
+        "checkpoint_downlink_agent": "downlink constraint detected; gathering checkpoint and contact-window data.",
+        "vibration_health_agent": "vibration signal detected; gathering cooling and hotspot correlation data.",
+    }
+    return messages.get(agent_name, "runtime change detected; gathering assigned telemetry.")
+
+
+def _latency_seconds(value: Any) -> str:
+    try:
+        milliseconds = float(value)
+    except (TypeError, ValueError):
+        return "unknown time"
+    return f"{milliseconds / 1000:.1f}s"
 
 
 def _number(value: Any) -> float | None:

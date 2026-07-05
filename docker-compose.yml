@@ -42,9 +42,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
-      CRUSOE_MODEL: ${CRUSOE_MODEL:-moonshotai/Kimi-K2.6}
+      CRUSOE_MODEL: ${CRUSOE_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_MULTIMODAL_MODEL: ${CRUSOE_MULTIMODAL_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-true}
+      CRUSOE_AGENT_ANALYSIS_ENABLED: ${CRUSOE_AGENT_ANALYSIS_ENABLED:-true}
       ORBITOPS_RADIATION_SOURCE: ${ORBITOPS_RADIATION_SOURCE:-auto}
       ORBITOPS_RADIATION_CACHE_SECONDS: ${ORBITOPS_RADIATION_CACHE_SECONDS:-60}
       ORBITOPS_RADIATION_TIMEOUT_SECONDS: ${ORBITOPS_RADIATION_TIMEOUT_SECONDS:-2.5}
@@ -92,9 +93,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
-      CRUSOE_MODEL: ${CRUSOE_MODEL:-moonshotai/Kimi-K2.6}
+      CRUSOE_MODEL: ${CRUSOE_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_MULTIMODAL_MODEL: ${CRUSOE_MULTIMODAL_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-true}
+      CRUSOE_AGENT_ANALYSIS_ENABLED: ${CRUSOE_AGENT_ANALYSIS_ENABLED:-true}
     depends_on:
       orbitops-api:
         condition: service_healthy

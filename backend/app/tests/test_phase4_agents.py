@@ -74,7 +74,7 @@ def test_heartbeat_preserves_active_agent_status() -> None:
             "status": "proposing",
             "phase": "propose",
             "severity": "RED",
-            "message": "Finding proposed to Commander.",
+            "message": "Finding sent to Commander.",
         },
     )()
 
@@ -82,13 +82,13 @@ def test_heartbeat_preserves_active_agent_status() -> None:
         "status": "proposing",
         "phase": "propose",
         "severity": "RED",
-        "message": "Finding proposed to Commander.",
+        "message": "Finding sent to Commander.",
     }
 
 
-def test_duplicate_finding_check_happens_before_detecting_status() -> None:
+def test_duplicate_finding_check_happens_before_status_emit() -> None:
     source = inspect.getsource(domain_agents._persist_finding)
-    assert source.index("find_existing_open_finding") < source.index('status="detecting"')
+    assert source.index("find_existing_open_finding") < source.index('status="explaining"')
 
 
 def test_radiation_agent_uses_computed_risk_data_with_integrity_signal() -> None:

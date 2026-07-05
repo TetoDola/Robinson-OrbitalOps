@@ -669,8 +669,15 @@ function workflowEntry(
 
 function agentEventStatus(agent: AgentStatusItem): WorkflowEventItem["status"] {
   const value = `${agent.status} ${agent.phase}`.toLowerCase();
-  if (value.includes("approval") || value.includes("blocked") || value.includes("failed")) return "blocked";
-  if (value.includes("propos") || value.includes("analy") || value.includes("detect") || value.includes("running")) {
+  if (value.includes("blocked") || value.includes("failed")) return "blocked";
+  // Awaiting approval is a normal in-progress state, not a failure.
+  if (
+    value.includes("approval") ||
+    value.includes("propos") ||
+    value.includes("analy") ||
+    value.includes("detect") ||
+    value.includes("running")
+  ) {
     return "running";
   }
   return "info";
@@ -709,9 +716,16 @@ const ACTION_AGENT_FALLBACKS: Record<string, string[]> = {
 };
 
 function appendAgentLogItem(existing: Record<string, AgentLogItem[]>, log: AgentLogItem): Record<string, AgentLogItem[]> {
+  const current = existing[log.agent] ?? [];
+  const latest = current[0];
+  // Heartbeats re-emit the same status every few seconds; keep the first
+  // occurrence so the timeline shows when a state started, not 48 repeats.
+  if (latest && latest.label === log.label && latest.detail === log.detail && latest.status === log.status) {
+    return existing;
+  }
   return {
     ...existing,
-    [log.agent]: [log, ...(existing[log.agent] ?? []).filter((item) => item.id !== log.id)].slice(0, 48),
+    [log.agent]: [log, ...current.filter((item) => item.id !== log.id)].slice(0, 48),
   };
 }
 

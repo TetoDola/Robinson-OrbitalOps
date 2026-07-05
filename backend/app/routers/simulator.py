@@ -15,7 +15,7 @@ from app.db.session import session_context
 from app.schemas.simulator import SimulatorInjectRequest, SimulatorInjectResponse
 from app.services.demo_reset import publish_reset_baseline, reset_demo_database
 from app.services.event_bus import publish_stream_event
-from app.services.manual_simulation import inject_named_issue
+from app.services.manual_simulation import UnknownSimulatorIssueError, inject_named_issue
 from app.simulator.telemetry_generator import run_simulator_tick
 
 router = APIRouter(tags=["simulator"])
@@ -49,7 +49,9 @@ async def reset_simulator() -> dict:
 async def inject_simulator_issue(issue: str, request: SimulatorInjectRequest | None = None) -> SimulatorInjectResponse:
     try:
         return await inject_named_issue(issue, request or SimulatorInjectRequest())
-    except ValueError as exc:
+    except UnknownSimulatorIssueError as exc:
+        # Only unknown issue names are 404s; other ValueErrors are real bugs and
+        # must surface as 500s instead of masquerading as "not found".
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 

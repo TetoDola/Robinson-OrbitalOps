@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { approveMissionPatch, rejectMissionPatch } from "../api/client";
@@ -37,48 +37,38 @@ interface PatchEvidenceItem {
   recommended_actions?: string[];
 }
 
+type FlowStatus = "pending" | "running" | "complete" | "blocked";
+
+interface AgentFlowNode {
+  key: string;
+  label: string;
+  sub?: string;
+  status: FlowStatus;
+  lines: string[];
+  image?: string | null;
+}
+
+// Shown only when the backend is unreachable. Must read as degraded, never
+// as healthy monitoring, so an outage cannot masquerade as a green fleet.
 const fallbackAgents: AgentStatusItem[] = [
-  {
-    agent: "workload_agent",
-    display_name: "Workload Agent",
-    status: "monitoring",
-    phase: "monitor",
-    severity: "INFO",
-    message: "Scheduler and GPU utilization are aligned.",
-  },
-  {
-    agent: "thermal_physical_agent",
-    display_name: "Thermal / Physical Agent",
-    status: "monitoring",
-    phase: "monitor",
-    severity: "INFO",
-    message: "Node temperatures are in nominal range.",
-  },
-  {
-    agent: "power_orbit_agent",
-    display_name: "Power / Orbit Agent",
-    status: "monitoring",
-    phase: "monitor",
-    severity: "INFO",
-    message: "Orbit and battery envelope are stable.",
-  },
-  {
-    agent: "radiation_integrity_agent",
-    display_name: "Radiation / Integrity Agent",
-    status: "monitoring",
-    phase: "monitor",
-    severity: "INFO",
-    message: "ECC and NaN checks are within expected envelope.",
-  },
-  {
-    agent: "checkpoint_downlink_agent",
-    display_name: "Checkpoint / Downlink Agent",
-    status: "monitoring",
-    phase: "monitor",
-    severity: "INFO",
-    message: "Checkpoint size and downlink capacity are healthy.",
-  },
-];
+  "workload_agent",
+  "thermal_physical_agent",
+  "power_orbit_agent",
+  "radiation_integrity_agent",
+  "checkpoint_downlink_agent",
+  "vibration_health_agent",
+  "commander_agent",
+].map((agent) => ({
+  agent,
+  display_name: agent
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" "),
+  status: "offline",
+  phase: "offline",
+  severity: "RED",
+  message: "Live agent status unavailable — backend not reachable.",
+}));
 
 const detectorScope: Record<string, string> = {
   workload_agent: "Scheduler truth, GPU utilization, rank lag, worker progress, orphan process evidence.",
@@ -92,6 +82,7 @@ const detectorScope: Record<string, string> = {
 
 function workStateClass(agent: AgentStatusItem, missionPatchStatus?: string | null): string {
   const value = `${agent.status} ${agent.phase}`.toLowerCase();
+  if (value.includes("offline")) return "status-red";
   if (agent.agent === "commander_agent" && missionPatchStatus === "verified") return "status-green";
   if (agent.agent === "commander_agent" && missionPatchStatus === "rejected") return "status-red";
   if (agent.agent === "commander_agent" && isActivePatchStatus(missionPatchStatus)) return "status-orange";
@@ -117,17 +108,26 @@ function isActivePatchStatus(status: string | null | undefined): boolean {
   return ["pending_approval", "approved", "executing"].includes(status ?? "");
 }
 
+// A status row can lag the patch decision (heartbeats re-emit the last row
+// until the next poll). Never display "awaiting approval" unless a patch is
+// actually pending — reconcile every agent against the live patch state.
+function reconcileAgent(agent: AgentStatusItem, missionPatch: MissionPatch | null): AgentStatusItem {
+  if (agent.status !== "awaiting_approval" || missionPatch?.status === "pending_approval") return agent;
+  const message =
+    missionPatch?.status === "rejected"
+      ? "Operator rejected the related mission patch; monitoring baseline."
+      : missionPatch?.status === "approved" || missionPatch?.status === "executing"
+        ? "Approval received; related controls are executing."
+        : missionPatch?.status === "verified"
+          ? "Related controls verified; monitoring baseline."
+          : "Monitoring assigned domain; no approval is currently pending.";
+  return { ...agent, status: "monitoring", phase: "monitor", severity: "INFO", message };
+}
+
 function toneClass(tone: Tone | undefined): string {
   if (tone === "critical") return "status-red";
   if (tone === "warn") return "status-orange";
   return "status-green";
-}
-
-function logStateClass(status: AgentLogItem["status"]): string {
-  if (status === "blocked") return "status-red";
-  if (status === "complete") return "status-green";
-  if (status === "running") return "status-orange";
-  return "status-cyan";
 }
 
 function humanize(value: string): string {
@@ -139,11 +139,6 @@ function shortId(value: string | null | undefined): string {
   return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
 }
 
-function formatConfidence(finding: AgentFinding | undefined): string {
-  if (!finding) return "pending";
-  return `${Math.round(finding.confidence * 100)}%`;
-}
-
 function formatDate(value: string | undefined): string {
   if (!value) return "not recorded";
   const parsed = new Date(value);
@@ -151,25 +146,209 @@ function formatDate(value: string | undefined): string {
   return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function secondsUntil(value: string | undefined, nowMs: number): number | null {
-  if (!value) return null;
-  const target = new Date(value).getTime();
-  if (Number.isNaN(target)) return null;
-  return Math.max(0, Math.round((target - nowMs) / 1000));
+function formatLatency(milliseconds: number | null | undefined): string {
+  if (typeof milliseconds !== "number" || Number.isNaN(milliseconds)) return "unknown time";
+  return `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
-function formatSeconds(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "--";
-  if (value <= 0) return "due";
-  const minutes = Math.floor(value / 60);
-  const seconds = value % 60;
-  return minutes > 0 ? `${minutes}m ${seconds.toString().padStart(2, "0")}s` : `${seconds}s`;
+function stepStatusClass(status: FlowStatus): string {
+  if (status === "blocked") return "status-red";
+  if (status === "complete") return "status-green";
+  if (status === "running") return "status-orange";
+  return "status-cyan";
 }
 
-function formatInterval(seconds: number | undefined): string {
-  if (!seconds) return "--";
-  if (seconds % 60 === 0) return `${seconds / 60} min`;
-  return `${seconds}s`;
+function isAgentActive(agent: AgentStatusItem): boolean {
+  const value = `${agent.status} ${agent.phase}`.toLowerCase();
+  return ["analy", "detect", "dispatch", "explain", "model", "propos", "running"].some((needle) =>
+    value.includes(needle),
+  );
+}
+
+function modelReplyText(
+  latestFinding: AgentFinding | undefined,
+  activityLog: AgentLogItem[],
+  thermalInput: ThermalVisualInput | null,
+): string | null {
+  if (thermalInput?.model_result?.model || typeof thermalInput?.model_result?.latency_ms === "number") {
+    const model = thermalInput.model_result?.model ?? "Nemotron";
+    const latency = thermalInput.model_result?.latency_ms;
+    return typeof latency === "number" ? `${model} replied in ${formatLatency(latency)}.` : `${model} replied.`;
+  }
+  const logReply = activityLog.find((item) => item.detail.toLowerCase().includes("replied in"));
+  if (logReply) return logReply.detail;
+  return latestFinding?.evidence.find((item) => item.toLowerCase().includes("replied in")) ?? null;
+}
+
+function modelRequestText(activityLog: AgentLogItem[]): string | null {
+  return activityLog.find((item) => item.detail.toLowerCase().includes("sending") && item.detail.toLowerCase().includes("to"))
+    ?.detail ?? null;
+}
+
+function clip(value: string, max = 110): string {
+  return value.length > max ? `${value.slice(0, max - 3).trimEnd()}...` : value;
+}
+
+function buildAgentFlowNodes({
+  agent,
+  latestFinding,
+  missionPatch,
+  runtime,
+  signalRows,
+  activityLog,
+  thermalInput,
+  patchCommands,
+  modelName,
+  patchRelevant,
+  openFindingCount,
+}: {
+  agent: AgentStatusItem;
+  latestFinding?: AgentFinding;
+  missionPatch: MissionPatch | null;
+  runtime?: AgentRuntimeItem;
+  signalRows: SignalRow[];
+  activityLog: AgentLogItem[];
+  thermalInput: ThermalVisualInput | null;
+  patchCommands: Command[];
+  modelName: string | null;
+  patchRelevant: boolean;
+  openFindingCount: number;
+}): AgentFlowNode[] {
+  const active = isAgentActive(agent);
+  const hasFinding = Boolean(latestFinding);
+  const reply = modelReplyText(latestFinding, activityLog, thermalInput);
+  const request = modelRequestText(activityLog);
+  const hasPatch = Boolean(missionPatch && patchRelevant);
+  const patchStatus = missionPatch?.status ?? null;
+  // The Commander never produces its own findings; its flow is driven by the
+  // open domain findings it groups and the patch it assembles.
+  const isCommander = agent.agent === "commander_agent";
+  const commanderHasWork = openFindingCount > 0 || hasPatch;
+
+  const trigger: AgentFlowNode = {
+    key: "trigger",
+    label: "trigger",
+    sub: humanize(runtime?.last_triggered_by ?? "runtime change"),
+    status: isCommander ? (commanderHasWork ? "complete" : "pending") : hasFinding || active ? "complete" : "pending",
+    lines: [
+      isCommander
+        ? `${openFindingCount} open domain finding${openFindingCount === 1 ? "" : "s"} to group.`
+        : clip(latestFinding?.finding ?? runtime?.trigger_condition ?? agent.message),
+    ],
+  };
+
+  const gather: AgentFlowNode = {
+    key: "gather",
+    label: "gather data",
+    sub: `${runtime?.watched_fields?.length ?? signalRows.length} watched signals`,
+    status:
+      active && !hasFinding ? "running" : hasFinding || (isCommander && commanderHasWork) ? "complete" : "pending",
+    lines: signalRows.slice(0, 4).map((row) => `${row.label}: ${row.value}`),
+  };
+
+  const model: AgentFlowNode = {
+    key: "model",
+    label: "model call",
+    sub: isCommander
+      ? "summary polish"
+      : (thermalInput?.model_result?.model ?? (reply || request ? (modelName ?? "crusoe model") : "deterministic rules")),
+    status: isCommander
+      ? hasPatch
+        ? "complete"
+        : "pending"
+      : reply
+        ? "complete"
+        : request
+          ? "running"
+          : hasFinding
+            ? "complete"
+            : "pending",
+    lines: [
+      isCommander
+        ? hasPatch
+          ? "Patch summary composed from grouped agent findings."
+          : "Waiting for domain findings to group."
+        : clip(
+            reply ??
+              request ??
+              (hasFinding ? "Deterministic evidence used; no model advisory requested." : "Waiting for a trigger."),
+          ),
+    ],
+    image: thermalInput?.image_data_url ?? null,
+  };
+
+  const finding: AgentFlowNode = {
+    key: "finding",
+    label: isCommander ? "findings intake" : "finding",
+    sub: latestFinding ? `${latestFinding.severity} | ${Math.round(latestFinding.confidence * 100)}% confidence` : undefined,
+    status: isCommander ? (commanderHasWork ? "complete" : "pending") : hasFinding ? "complete" : "pending",
+    lines: [
+      isCommander
+        ? `${openFindingCount} open domain finding${openFindingCount === 1 ? "" : "s"} under review.`
+        : clip(latestFinding?.finding ?? "No open finding from this detector."),
+    ],
+  };
+
+  const commander: AgentFlowNode = {
+    key: "commander",
+    label: "commander",
+    sub: hasPatch ? `patch ${shortId(missionPatch?.id)}` : undefined,
+    status: hasPatch ? "complete" : (isCommander ? openFindingCount > 0 : hasFinding) ? "running" : "pending",
+    lines: [
+      hasPatch
+        ? clip(missionPatch?.summary ?? "Findings grouped into a mission patch.")
+        : (isCommander ? openFindingCount > 0 : hasFinding)
+          ? "Grouping open findings into a mission patch."
+          : isCommander
+            ? clip(agent.message)
+            : "No report needed yet.",
+    ],
+  };
+
+  const approval: AgentFlowNode = {
+    key: "approval",
+    label: "human approval",
+    sub: hasPatch ? humanize(patchStatus ?? "pending") : undefined,
+    status: !hasPatch
+      ? "pending"
+      : patchStatus === "pending_approval"
+        ? "running"
+        : patchStatus === "rejected"
+          ? "blocked"
+          : "complete",
+    lines: [
+      hasPatch
+        ? `${missionPatch?.actions?.length ?? 0} command${(missionPatch?.actions?.length ?? 0) === 1 ? "" : "s"} in scope.`
+        : "No mission patch waiting.",
+    ],
+  };
+
+  const succeeded = patchCommands.filter((command) => command.status === "succeeded").length;
+  const execution: AgentFlowNode = {
+    key: "execution",
+    label: "execution",
+    sub: patchStatus === "verified" ? "verified" : undefined,
+    status: !hasPatch
+      ? "pending"
+      : patchStatus === "rejected"
+        ? "blocked"
+        : patchStatus === "verified" || (patchCommands.length > 0 && succeeded === patchCommands.length)
+          ? "complete"
+          : patchCommands.length > 0
+            ? "running"
+            : "pending",
+    lines: [
+      !hasPatch
+        ? "Waiting for an approved patch."
+        : patchStatus === "rejected"
+          ? "Not executed — patch rejected."
+          : patchCommands.length > 0
+            ? `${succeeded}/${patchCommands.length} commands succeeded.`
+            : "Commands queue after approval.",
+    ],
+  };
+
+  return [trigger, gather, model, finding, commander, approval, execution];
 }
 
 function actionLabel(action: string | MissionPatchAction): string {
@@ -294,6 +473,7 @@ function buildSignalRows(
   radiationRisk: ProcessedRadiationRisk | null,
   openFindings: number,
   commandCount: number,
+  missionPatchStatus: string | null = null,
 ): SignalRow[] {
   const nodeA = findNode(worldState, "node-a");
   const nodeB = findNode(worldState, "node-b");
@@ -346,7 +526,12 @@ function buildSignalRows(
     case "commander_agent":
       return [
         { label: "open findings", value: String(openFindings), limit: ">0", tone: openFindings > 0 ? "warn" : "nominal" },
-        { label: "active patch", value: worldState?.active_mission_patch ? "present" : "none" },
+        {
+          label: "active patch",
+          value: missionPatchStatus ? humanize(missionPatchStatus) : "none",
+          limit: "pending needs decision",
+          tone: missionPatchStatus === "pending_approval" ? "warn" : "nominal",
+        },
         { label: "commands tracked", value: String(commandCount) },
         { label: "approval boundary", value: "human required" },
       ];
@@ -358,10 +543,6 @@ function buildSignalRows(
         { label: "commands", value: String(commandCount) },
       ];
   }
-}
-
-function assetsFromSignals(signalRows: SignalRow[]): string {
-  return signalRows.map((row) => `${row.label}: ${row.value}`).join(" | ");
 }
 
 function approvalProblemTitle(
@@ -416,6 +597,83 @@ function approvalAssetList(
   ]);
 }
 
+type FlowActor = "runtime" | "agent" | "model" | "commander" | "operator" | "executor";
+
+function transcriptActor(item: AgentLogItem): FlowActor {
+  const detail = item.detail.toLowerCase();
+  const label = item.label.toLowerCase();
+  if (detail.includes("replied in") || detail.includes("model advisory")) return "model";
+  if (label.includes("operator input") || detail.includes("human rejected") || detail.includes("human approval")) return "operator";
+  if (label.includes("command") || label.includes("verification")) return "executor";
+  if (label.includes("patch") || label.includes("approval state") || item.agent === "commander_agent") return "commander";
+  if (detail.includes("heartbeat") || label.includes("reset")) return "runtime";
+  return "agent";
+}
+
+function isModelRequestEntry(item: AgentLogItem): boolean {
+  const detail = item.detail.toLowerCase();
+  return detail.includes("sending") && detail.includes(" to ");
+}
+
+function LiveFlowTranscript({
+  log,
+  signalRows,
+  thermalInput,
+}: {
+  log: AgentLogItem[];
+  signalRows: SignalRow[];
+  thermalInput: ThermalVisualInput | null;
+}) {
+  const scrollRef = useRef<HTMLOListElement | null>(null);
+  // agentLogs store newest-first; a transcript reads oldest -> newest.
+  const entries = useMemo(() => [...log].reverse(), [log]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [entries.length]);
+
+  return (
+    <ol className="flow-transcript" ref={scrollRef}>
+      {entries.length === 0 ? (
+        <li className="chat-row actor-runtime">
+          <header>
+            <b>runtime</b>
+            <time>--</time>
+          </header>
+          <p>No workflow events recorded for this agent in this session yet.</p>
+        </li>
+      ) : null}
+      {entries.map((item) => {
+        const actor = transcriptActor(item);
+        const showPayload = isModelRequestEntry(item);
+        return (
+          <li className={`chat-row actor-${actor} is-${item.status}`} key={item.id}>
+            <header>
+              <b>{actor}</b>
+              <span>{item.label}</span>
+              <time>{formatDate(item.time)}</time>
+            </header>
+            <p>{item.detail}</p>
+            {showPayload ? (
+              <div className="chat-payload">
+                <span className="label">data sent with this request</span>
+                <div className="agent-chip-list">
+                  {signalRows.map((row) => (
+                    <span key={row.label}>{`${row.label}: ${row.value}`}</span>
+                  ))}
+                </div>
+                {thermalInput ? (
+                  <img alt={`Frame sent to the model for ${thermalInput.asset_id}`} src={thermalInput.image_data_url} />
+                ) : null}
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 interface AgentDetailModalProps {
   agent: AgentStatusItem;
   latestFinding?: AgentFinding;
@@ -427,13 +685,15 @@ interface AgentDetailModalProps {
   missionPatch: MissionPatch | null;
   approvalActions: MissionPatchAction[];
   approvalBusy: boolean;
+  approvalError: string | null;
   linkedPatchId?: string | null;
+  patchCommands: Command[];
+  modelName: string | null;
   worldState: WorldState | null;
   radiationRisk: ProcessedRadiationRisk | null;
   runtime?: AgentRuntimeItem;
   openFindingCount: number;
   commandCount: number;
-  nowMs: number;
   onApprovePatch: () => Promise<void>;
   onClose: () => void;
   onRejectPatch: () => Promise<void>;
@@ -450,13 +710,15 @@ function AgentDetailModal({
   missionPatch,
   approvalActions,
   approvalBusy,
+  approvalError,
   linkedPatchId,
+  patchCommands,
+  modelName,
   worldState,
   radiationRisk,
   runtime,
   openFindingCount,
   commandCount,
-  nowMs,
   onApprovePatch,
   onClose,
   onRejectPatch,
@@ -464,10 +726,18 @@ function AgentDetailModal({
   const actions = latestFinding?.recommended_actions?.length
     ? latestFinding.recommended_actions
     : patchActions.map((action) => String(action.type));
-  const evidence = latestFinding?.evidence?.length ? latestFinding.evidence : [agent.message];
+  const evidence = latestFinding?.evidence?.length
+    ? latestFinding.evidence
+    : ["No evidence packet from this detector."];
   const assets = latestFinding?.affected_assets?.length ? latestFinding.affected_assets : [];
-  const signalRows = buildSignalRows(agent.agent, worldState, radiationRisk, openFindingCount, relatedCommands.length || commandCount);
-  const nextRunSeconds = secondsUntil(runtime?.next_run_at, nowMs);
+  const signalRows = buildSignalRows(
+    agent.agent,
+    worldState,
+    radiationRisk,
+    openFindingCount,
+    patchCommands.length || relatedCommands.length || commandCount,
+    missionPatch?.status ?? null,
+  );
   const thermalInput: ThermalVisualInput | null =
     agent.agent === "thermal_physical_agent" ? (worldState?.thermal.latest_visual_input ?? null) : null;
   const patchStatus = missionPatch?.status ?? null;
@@ -487,6 +757,19 @@ function AgentDetailModal({
   const patchCommandCount = patchActions.length;
   const canDecidePatch = missionPatch?.status === "pending_approval" && patchCommandCount > 0;
   const commandContext = approvalActions.length === 0 ? "Mission Patch command set" : "Commands matching this agent context";
+  const flowNodes = buildAgentFlowNodes({
+    agent,
+    latestFinding,
+    missionPatch,
+    runtime,
+    signalRows,
+    activityLog,
+    thermalInput,
+    patchCommands,
+    modelName,
+    patchRelevant: patchRelevantToAgent,
+    openFindingCount,
+  });
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -519,52 +802,32 @@ function AgentDetailModal({
         </header>
 
         <div className="agent-modal-grid">
-          <section className="agent-modal-section agent-current">
+          <section className="agent-modal-section span-2">
             <div className="section-header compact">
               <div>
-                <div className="eyebrow">detector state</div>
-                <strong>{workStateLabel(agent, patchStatus)}</strong>
+                <div className="eyebrow">live agent flow</div>
+                <strong>{flowNodes.find((node) => node.status === "running")?.label ?? "latest execution"}</strong>
               </div>
-              <b className={workStateClass(agent, patchStatus)}>{workStateLabel(agent, patchStatus)}</b>
+              <b className="status-cyan">{flowNodes.length} stages</b>
             </div>
-            <p>{agent.message}</p>
-            <div className="agent-detail-metrics">
-              <div>
-                <span className="label">phase</span>
-                <strong>{humanize(agent.phase)}</strong>
-              </div>
-              <div>
-                <span className="label">confidence</span>
-                <strong>{formatConfidence(latestFinding)}</strong>
-              </div>
-              <div>
-                <span className="label">sample age</span>
-                <strong>{formatDate(agent.updated_at)}</strong>
-              </div>
-              <div>
-                <span className="label">run state</span>
-                <strong>{runtime?.run_state ?? "scheduled"}</strong>
-              </div>
-              <div>
-                <span className="label">next run</span>
-                <strong>{formatSeconds(nextRunSeconds)}</strong>
-              </div>
-              <div>
-                <span className="label">interval</span>
-                <strong>{formatInterval(runtime?.interval_seconds)}</strong>
-              </div>
-            </div>
-          </section>
-
-          <section className="agent-modal-section">
-            <div className="eyebrow">live inputs</div>
-            <div className="agent-signal-table">
-              {signalRows.map((row) => (
-                <div className="agent-signal-row" key={row.label}>
-                  <span>{row.label}</span>
-                  <strong className={toneClass(row.tone)}>{row.value}</strong>
-                  <small>{row.limit ?? "baseline"}</small>
-                </div>
+            <div className="agent-flow-graph">
+              {flowNodes.map((node, index) => (
+                <Fragment key={node.key}>
+                  {index > 0 ? <span aria-hidden="true" className={`flow-connector is-${node.status}`} /> : null}
+                  <article className={`flow-node is-${node.status}`}>
+                    <header>
+                      <strong>{node.label}</strong>
+                      <b className={stepStatusClass(node.status)}>{humanize(node.status)}</b>
+                    </header>
+                    {node.sub ? <small title={node.sub}>{node.sub}</small> : null}
+                    {node.image ? <img alt={`Input frame sent to ${node.sub ?? "the model"}`} src={node.image} /> : null}
+                    <ul>
+                      {node.lines.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  </article>
+                </Fragment>
               ))}
             </div>
           </section>
@@ -572,41 +835,12 @@ function AgentDetailModal({
           <section className="agent-modal-section span-2">
             <div className="section-header compact">
               <div>
-                <div className="eyebrow">current finding</div>
-                <strong>{latestFinding?.finding ?? "No open finding reported"}</strong>
+                <div className="eyebrow">live flow log</div>
+                <strong>{activityLog.length ? `${activityLog.length} event${activityLog.length === 1 ? "" : "s"}` : "no events yet"}</strong>
               </div>
-              <b className={toneClass(latestFinding ? "warn" : "nominal")}>
-                {latestFinding?.status ?? humanize(agent.status)}
-              </b>
+              <b className="status-cyan">chronological</b>
             </div>
-            <p>{latestFinding?.risk ?? "No domain risk is currently above this detector's trigger threshold."}</p>
-            <div className="agent-evidence-grid">
-              <div>
-                <span className="label">evidence</span>
-                <ul>
-                  {evidence.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <span className="label">affected assets</span>
-                <div className="agent-chip-list">
-                  {(assets.length ? assets : ["none"]).map((asset) => (
-                    <span key={asset}>{asset}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="agent-modal-section">
-            <div className="eyebrow">proposed controls</div>
-            <ul className="agent-action-list">
-              {(actions.length ? actions : ["continue_monitoring"]).map((action) => (
-                <li key={action}>{actionLabel(action)}</li>
-              ))}
-            </ul>
+            <LiveFlowTranscript log={activityLog} signalRows={signalRows} thermalInput={thermalInput} />
           </section>
 
           {missionPatch && patchRelevantToAgent && patchCommandCount > 0 ? (
@@ -681,6 +915,7 @@ function AgentDetailModal({
               <div className="agent-approval-note">
                 Approval is only needed because this detector raised an unsafe condition. Approving here executes the entire validated Mission Patch ({patchCommandCount} commands total), not just this one command group.
               </div>
+              {approvalError ? <p className="approval-error">{approvalError}</p> : null}
               <div className="agent-approval-buttons">
                 <button disabled={!canDecidePatch || approvalBusy} onClick={() => void onApprovePatch()} type="button">
                   Approve
@@ -691,6 +926,46 @@ function AgentDetailModal({
               </div>
             </section>
           ) : null}
+
+          <section className="agent-modal-section span-2">
+            <div className="section-header compact">
+              <div>
+                <div className="eyebrow">current finding</div>
+                <strong>{latestFinding?.finding ?? "No open finding reported"}</strong>
+              </div>
+              <b className={toneClass(latestFinding ? "warn" : "nominal")}>
+                {latestFinding?.status ?? "none"}
+              </b>
+            </div>
+            <p>{latestFinding?.risk ?? "No domain risk is currently above this detector's trigger threshold."}</p>
+            <div className="agent-evidence-grid">
+              <div>
+                <span className="label">evidence</span>
+                <ul>
+                  {evidence.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <span className="label">affected assets</span>
+                <div className="agent-chip-list">
+                  {(assets.length ? assets : ["none"]).map((asset) => (
+                    <span key={asset}>{asset}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="agent-modal-section">
+            <div className="eyebrow">proposed controls</div>
+            <ul className="agent-action-list">
+              {(actions.length ? actions : ["continue_monitoring"]).map((action) => (
+                <li key={action}>{actionLabel(action)}</li>
+              ))}
+            </ul>
+          </section>
 
           {thermalInput && approvalActions.length === 0 ? (
             <section className="agent-modal-section thermal-frame-section">
@@ -725,44 +1000,9 @@ function AgentDetailModal({
               </div>
               <div>
                 <span>commands</span>
-                <strong>{relatedCommands.length}</strong>
+                <strong>{patchRelevantToAgent && patchCommands.length ? patchCommands.length : relatedCommands.length}</strong>
               </div>
             </div>
-          </section>
-
-          <section className="agent-modal-section span-2">
-            <div className="section-header compact">
-              <div>
-                <div className="eyebrow">live agent log</div>
-                <strong>{activityLog.length ? "event stream" : "no agent events yet"}</strong>
-              </div>
-              <b className="status-cyan">{activityLog.length} entries</b>
-            </div>
-            <ol className="agent-live-log">
-              {(activityLog.length
-                ? activityLog
-                : [
-                    {
-                      id: `${agent.agent}-monitoring-placeholder`,
-                      agent: agent.agent,
-                      time: agent.updated_at ?? new Date(nowMs).toISOString(),
-                      label: "Monitoring",
-                      detail: agent.message,
-                      status: "info" as const,
-                      eventType: "agent.status.updated",
-                    },
-                  ]
-              )
-                .slice(0, 18)
-                .map((item) => (
-                  <li key={item.id}>
-                    <time>{formatDate(item.time)}</time>
-                    <strong>{item.label}</strong>
-                    <span>{item.detail}</span>
-                    <b className={logStateClass(item.status)}>{humanize(item.status)}</b>
-                  </li>
-                ))}
-            </ol>
           </section>
 
           <section className="agent-modal-section span-2">
@@ -771,7 +1011,7 @@ function AgentDetailModal({
                 <div className="eyebrow">recent reports</div>
                 <strong>{history.length ? `${history.length} report${history.length === 1 ? "" : "s"}` : "status only"}</strong>
               </div>
-              <b className="status-yellow">{assetsFromSignals(signalRows)}</b>
+              <b className="status-cyan">{formatDate(agent.updated_at)}</b>
             </div>
             <ol className="agent-history">
               {(history.length ? history : latestFinding ? [latestFinding] : []).slice(0, 4).map((finding) => (
@@ -808,15 +1048,14 @@ export default function AgentStatus() {
   const worldState = useWorldStore((state) => state.worldState);
   const radiationRisk = useWorldStore((state) => state.radiationRisk);
   const agentLogs = useWorldStore((state) => state.agentLogs);
-  const visibleAgents = agents.length > 0 ? agents : fallbackAgents;
+  const aiStatus = useWorldStore((state) => state.aiStatus);
+  const missionPatchForReconcile = useWorldStore((state) => state.missionPatch);
+  const visibleAgents = (agents.length > 0 ? agents : fallbackAgents).map((agent) =>
+    reconcileAgent(agent, missionPatchForReconcile),
+  );
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(Date.now());
   const [approvalBusy, setApprovalBusy] = useState(false);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, []);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const selectedAgent = useMemo(
     () => visibleAgents.find((agent) => agent.agent === selectedAgentId),
@@ -831,6 +1070,7 @@ export default function AgentStatus() {
     ? incidents.find((incident) => incident.finding_ids.includes(latestFinding.id))
     : undefined;
   const relatedCommands = commands.filter((command) => commandMatchesAgent(command, latestFinding));
+  const patchCommands = missionPatch ? commands.filter((command) => command.mission_patch_id === missionPatch.id) : [];
   const patchActions = missionPatch?.actions ?? [];
   const approvalActions = selectedAgent ? relatedPatchActions(selectedAgent, selectedHistory, patchActions, missionPatch) : [];
   const openFindingCount = agentFindings.filter((finding) => finding.status === "open").length;
@@ -839,12 +1079,14 @@ export default function AgentStatus() {
   async function approveFromAgent() {
     if (!missionPatch || approvalBusy) return;
     setApprovalBusy(true);
+    setApprovalError(null);
     setPatchMode("execute");
     try {
       const updatedPatch = await approveMissionPatch(missionPatch.id);
       setMissionPatch(updatedPatch);
     } catch {
       setPatchMode("pending");
+      setApprovalError("Approve failed — the backend rejected the request or is unreachable. The patch is still pending.");
     } finally {
       setApprovalBusy(false);
     }
@@ -853,12 +1095,14 @@ export default function AgentStatus() {
   async function rejectFromAgent() {
     if (!missionPatch || approvalBusy) return;
     setApprovalBusy(true);
+    setApprovalError(null);
     setPatchMode("reject");
     try {
       const updatedPatch = await rejectMissionPatch(missionPatch.id);
       setMissionPatch(updatedPatch);
     } catch {
       setPatchMode("pending");
+      setApprovalError("Reject failed — the backend rejected the request or is unreachable. The patch is still pending.");
     } finally {
       setApprovalBusy(false);
     }
@@ -866,11 +1110,36 @@ export default function AgentStatus() {
 
   return (
     <section className="rail-section" aria-label="Independent agent status">
-      <div className="eyebrow">detectors</div>
+      <div className="eyebrow">agent system</div>
+      <ol className="agent-system-flow">
+        <li>
+          <span>01</span>
+          <strong>runtime trigger</strong>
+        </li>
+        <li>
+          <span>02</span>
+          <strong>Commander dispatch</strong>
+        </li>
+        <li>
+          <span>03</span>
+          <strong>AI analysis</strong>
+        </li>
+        <li>
+          <span>04</span>
+          <strong>patch or monitor</strong>
+        </li>
+      </ol>
       <div className="agent-status-list">
         {visibleAgents.map((agent) => {
           const runtime = agentRuntime.find((item) => item.agent === agent.agent);
-          const nextRun = formatSeconds(secondsUntil(runtime?.next_run_at, nowMs));
+          const hasReport = agentFindings.some((finding) => finding.agent_name === agent.agent);
+          const flowLine = isAgentActive(agent)
+            ? "Commander dispatch -> gathering data"
+            : hasReport
+              ? "report sent to Commander"
+              : runtime?.run_state === "awaiting_approval"
+                ? "Commander waiting for approval"
+                : "watching triggers";
           return (
             <button
               className={`agent-card${agent.agent === selectedAgentId ? " is-selected" : ""}`}
@@ -882,7 +1151,7 @@ export default function AgentStatus() {
               <span>
                 <strong>{agent.display_name}</strong>
                 {agent.message}
-                <small>next run {nextRun}</small>
+                <small>{flowLine}</small>
               </span>
               <b className={workStateClass(agent, missionPatchStatus)}>{workStateLabel(agent, missionPatchStatus)}</b>
             </button>
@@ -900,6 +1169,9 @@ export default function AgentStatus() {
               missionPatch={missionPatch}
               approvalActions={approvalActions}
               approvalBusy={approvalBusy}
+              approvalError={approvalError}
+              patchCommands={patchCommands}
+              modelName={aiStatus?.text_model ?? null}
               patchActions={patchActions}
               relatedCommands={relatedCommands}
               relatedIncident={relatedIncident}
@@ -909,7 +1181,6 @@ export default function AgentStatus() {
               runtime={agentRuntime.find((item) => item.agent === selectedAgent.agent)}
               openFindingCount={openFindingCount}
               commandCount={commands.length}
-              nowMs={nowMs}
               onApprovePatch={approveFromAgent}
               onClose={() => setSelectedAgentId(null)}
               onRejectPatch={rejectFromAgent}

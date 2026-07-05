@@ -11,7 +11,12 @@ import {
   injectSimulatorIssue,
 } from "../api/client";
 import { useWorldStore } from "../store/worldStore";
-import { IRCameraCanvas, type IrNodeTarget } from "./IRCamPopup";
+import { IRCameraCanvas, renderIrFrameDataUrl, type IrNodeTarget } from "./IRCamPopup";
+
+// The thermal-frame scenario drives node-c to 91 C on the backend; render the
+// simulated IR capture at that incident temperature so the frame sent to the
+// model matches the story, not the pre-injection nominal board.
+const SIMULATED_INCIDENT_TEMP_C = 91;
 
 const issueButtons = [
   { id: "thermal-frame", label: "Thermal frame", tone: "danger" },
@@ -33,6 +38,12 @@ function fileToDataUrl(file: File): Promise<string> {
 
 function humanize(value: string): string {
   return value.replace(/[_-]+/g, " ");
+}
+
+function formatClock(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 async function refreshBackendSnapshot() {
@@ -103,6 +114,14 @@ export default function SimulationControls() {
       status: "running",
     });
     try {
+      const simulatedIrFrame =
+        issue === "thermal-frame" && !selectedFile
+          ? await renderIrFrameDataUrl({
+              id: "node-c",
+              status: "thermal_risk",
+              tempC: Math.max(irNode.tempC, SIMULATED_INCIDENT_TEMP_C),
+            })
+          : null;
       const payload =
         issue === "thermal-frame" && selectedFile
           ? {
@@ -111,10 +130,17 @@ export default function SimulationControls() {
               source: "operator-upload",
               notes: selectedFile.name,
             }
-          : {
-              asset_id: issue === "vibration-fault" || issue === "thermal-frame" ? "node-c" : "orbital-dc-01",
-              source: "operator-sim",
-            };
+          : issue === "thermal-frame" && simulatedIrFrame
+            ? {
+                image_data_url: simulatedIrFrame,
+                asset_id: "node-c",
+                source: "ir-cam-sim",
+                notes: "Simulated IR capture: thermal overlay on B200 board",
+              }
+            : {
+                asset_id: issue === "vibration-fault" || issue === "thermal-frame" ? "node-c" : "orbital-dc-01",
+                source: "operator-sim",
+              };
       const response = await injectSimulatorIssue(issue, payload);
       store.pushWorkflowEvent({
         id: `backend-${issue}-${Date.now()}`,
@@ -228,7 +254,10 @@ export default function SimulationControls() {
             <div className={`workflow-row ${event.status}`} key={event.id}>
               <i aria-hidden="true" />
               <span>
-                <strong>{event.label}</strong>
+                <strong>
+                  {event.label}
+                  {event.time ? <time>{formatClock(event.time)}</time> : null}
+                </strong>
                 {event.detail}
               </span>
             </div>

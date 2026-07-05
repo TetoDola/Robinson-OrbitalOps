@@ -25,9 +25,10 @@ class Settings(BaseSettings):
     # Crusoe settings are optional by design; app must start without an API key.
     crusoe_api_key: str | None = None
     crusoe_base_url: str = "https://api.inference.crusoecloud.com/v1/"
-    crusoe_model: str = "moonshotai/Kimi-K2.6"
+    crusoe_model: str = "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B"
     crusoe_multimodal_model: str = "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B"
     crusoe_enabled: bool = False
+    crusoe_agent_analysis_enabled: bool = False
 
     world_state_seed_version: int = 1
     websocket_heartbeat_seconds: float = 5.0

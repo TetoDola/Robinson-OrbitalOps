@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,4 +37,12 @@ def _incident_payload(incident: Incident) -> dict:
         "status": incident.status,
         "finding_ids": incident.finding_ids,
         "summary": incident.summary,
+        "created_at": _as_utc(incident.created_at).isoformat(),
+        "updated_at": _as_utc(incident.updated_at).isoformat(),
     }
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

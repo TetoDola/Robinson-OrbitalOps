@@ -41,6 +41,13 @@ function humanize(value: string): string {
   return value.replace(/[_-]+/g, " ");
 }
 
+function formatClock(value: string | undefined): string {
+  if (!value) return "--:--";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "--:--";
+  return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 function actionLabel(action: MissionPatchAction): string {
   const target = action.node_id ?? action.job_id ?? action.checkpoint_id ?? action.target_asset_id;
   const prefix = humanize(action.type);
@@ -136,6 +143,7 @@ export default function MissionPatchPanel() {
   const setMissionPatch = useWorldStore((state) => state.setMissionPatch);
   const patchMode = useWorldStore((state) => state.patchMode);
   const setPatchMode = useWorldStore((state) => state.setPatchMode);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const worldState = useWorldStore((state) => state.worldState);
   const incidents = useWorldStore((state) => state.incidents);
   const resetIdle = !missionPatch && incidents.length === 0;
@@ -172,6 +180,10 @@ export default function MissionPatchPanel() {
   }
 
   const actions = missionPatch?.actions?.length ? missionPatch.actions.map(actionLabel) : [];
+  const rollbackValue = missionPatch?.rollback_plan?.if_verification_fails;
+  const rollbackSteps = Array.isArray(rollbackValue)
+    ? rollbackValue.filter((step): step is string => typeof step === "string")
+    : [];
   const nodes = worldState?.nodes ?? [];
   const visibleIncidents = incidents;
   const maxNodeTemp = nodes.reduce((max, node) => Math.max(max, node.temp_c ?? 0), 0);
@@ -189,26 +201,30 @@ export default function MissionPatchPanel() {
   const canDecidePatch = missionPatch?.status === "pending_approval";
 
   async function approvePatch() {
-    setPatchMode("execute");
     if (!missionPatch) return;
+    setApprovalError(null);
+    setPatchMode("execute");
 
     try {
       const updatedPatch = await approveMissionPatch(missionPatch.id);
       setMissionPatch(updatedPatch);
     } catch {
       setPatchMode("pending");
+      setApprovalError("Approve failed — the backend rejected the request or is unreachable. The patch is still pending.");
     }
   }
 
   async function rejectPatch() {
-    setPatchMode("reject");
     if (!missionPatch) return;
+    setApprovalError(null);
+    setPatchMode("reject");
 
     try {
       const updatedPatch = await rejectMissionPatch(missionPatch.id);
       setMissionPatch(updatedPatch);
     } catch {
       setPatchMode("pending");
+      setApprovalError("Reject failed — the backend rejected the request or is unreachable. The patch is still pending.");
     }
   }
 
@@ -258,11 +274,26 @@ export default function MissionPatchPanel() {
               ? "Agents are monitoring the reset baseline. No recovery patch is awaiting approval."
               : "An incident is open. Waiting for Commander to assemble a validated mission patch.")}
         </p>
+        {missionPatch ? (
+          <div className="patch-scope">
+            <span className={severityClass(String(missionPatch.severity))}>{missionPatch.severity}</span>
+            <span>
+              {actions.length} command{actions.length === 1 ? "" : "s"} in scope — approving executes all of them
+            </span>
+          </div>
+        ) : null}
         <ol className="patch-action-list">
-          {actions.slice(0, 5).map((action) => (
+          {actions.map((action) => (
             <li key={action}>{action}</li>
           ))}
         </ol>
+        {rollbackSteps.length > 0 ? (
+          <p className="patch-rollback">
+            <span className="label">rollback if verification fails</span>
+            {rollbackSteps.map(humanize).join(", ")}
+          </p>
+        ) : null}
+        {approvalError ? <p className="approval-error">{approvalError}</p> : null}
         {resetIdle ? (
           <div className="patch-buttons">
             <button className="patch-btn" disabled type="button">
@@ -273,12 +304,6 @@ export default function MissionPatchPanel() {
           <div className="patch-buttons">
             <button className="patch-btn primary" disabled={!canDecidePatch} onClick={() => void approvePatch()} type="button">
               Approve
-            </button>
-            <button className="patch-btn" onClick={() => setPatchMode("replan")} type="button">
-              Replan
-            </button>
-            <button className="patch-btn" onClick={() => setPatchMode("modify")} type="button">
-              Modify
             </button>
             <button className="patch-btn danger" disabled={!canDecidePatch} onClick={() => void rejectPatch()} type="button">
               Reject
@@ -362,12 +387,12 @@ export default function MissionPatchPanel() {
           </div>
         </div>
         <div className="incident-list">
-          {visibleIncidents.map((incident, index) => (
+          {visibleIncidents.map((incident) => (
             <div className="incident-row" key={incident.id}>
-              <span className="incident-time">T+00:{String(index + 1).padStart(2, "0")}</span>
+              <span className="incident-time">{formatClock(incident.created_at)}</span>
               <span>
                 <strong>{incident.title}</strong>
-                {incident.summary.replace("11 min", telemetry.eclipse)}
+                {incident.summary}
               </span>
               <b className={severityClass(String(incident.severity))}>{incident.status}</b>
             </div>

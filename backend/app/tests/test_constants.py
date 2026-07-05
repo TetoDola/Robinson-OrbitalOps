@@ -6,7 +6,7 @@ from app.db.models import AgentStatus, AgentStatusEvent
 
 
 def test_crusoe_model_is_exactly_expected_case() -> None:
-    assert settings.crusoe_model == "moonshotai/Kimi-K2.6"
+    assert settings.crusoe_model == "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B"
 
 
 def test_command_enum_contains_allowed_actions() -> None:

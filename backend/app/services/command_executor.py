@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.constants import StreamName
-from app.db.models import Command, MissionPatch
+from app.db.models import AgentFinding, AgentStatus, Command, Incident, MissionPatch
 from app.db.session import session_context
 from app.services.bootstrap import wait_for_database_ready, wait_for_redis_ready
 from app.services.outbox import enqueue_outbox_event, publish_outbox_events_by_keys
@@ -185,6 +185,33 @@ async def execute_commands_in_session(
             continue
         mission_patch.status = "verified"
         mission_patch.updated_at = datetime.now(timezone.utc)
+        # Return linked agents to monitoring so their status reflects the
+        # verified outcome instead of the last approval-era message.
+        agent_rows = await session.execute(select(AgentStatus).where(AgentStatus.linked_mission_patch_id == patch_id))
+        for agent_row in agent_rows.scalars().all():
+            agent_row.status = "monitoring"
+            agent_row.phase = "monitor"
+            agent_row.severity = "INFO"
+            agent_row.message = (
+                "Mission patch verified; monitoring for new findings."
+                if agent_row.agent == "commander_agent"
+                else "Related controls verified; monitoring baseline."
+            )
+            agent_row.linked_mission_patch_id = None
+            agent_row.updated_by = "orbitops-executor"
+            agent_row.updated_at = datetime.now(timezone.utc)
+        if mission_patch.incident_id:
+            incident = await session.get(Incident, mission_patch.incident_id)
+            if incident is not None:
+                incident.status = "resolved"
+                incident.updated_at = datetime.now(timezone.utc)
+                if incident.finding_ids:
+                    findings_result = await session.execute(
+                        select(AgentFinding).where(AgentFinding.id.in_(incident.finding_ids))
+                    )
+                    for finding in findings_result.scalars().all():
+                        if finding.status == "open":
+                            finding.status = "resolved"
         await state_writer(
             session,
             {

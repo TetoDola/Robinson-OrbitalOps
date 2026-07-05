@@ -15,7 +15,7 @@ from app.agents.domain_agents import (
 )
 from app.agents.power_orbit_agent import build_power_orbit_finding
 from app.constants import CANONICAL_WORLD_STATE
-from app.db.models import Approval, Command, Incident, MissionPatch, OutboxEvent
+from app.db.models import AgentFinding, Approval, Command, Incident, MissionPatch, OutboxEvent
 from app.routers.mission_patches import ApprovalRequest, approve_mission_patch, approve_patch_transaction, reject_patch_transaction
 
 
@@ -91,7 +91,9 @@ def _incident_state() -> dict:
 
 def test_approve_transaction_creates_approval_and_queued_commands() -> None:
     patch = _pending_patch()
-    session = _FakeSession([patch, None, *([None] * len(patch.actions)), None, None])
+    # Values: locked patch, approval lookup, agent-status sync, one per command
+    # lookup, then the outbox idempotency checks.
+    session = _FakeSession([patch, None, None, *([None] * len(patch.actions)), None, None, None])
 
     approved_patch, created_approval, created_commands, commands, outbox_keys = asyncio.run(
         approve_patch_transaction(
@@ -112,15 +114,14 @@ def test_approve_transaction_creates_approval_and_queued_commands() -> None:
     assert session.commits == 1
     assert sum(isinstance(row, Approval) for row in session.added) == 1
     assert sum(isinstance(row, Command) for row in session.added) == len(patch.actions)
-    assert sum(isinstance(row, OutboxEvent) for row in session.added) == 2
+    assert sum(isinstance(row, OutboxEvent) for row in session.added) == 3
     assert set(outbox_keys) == {
         "outbox:patch-042:command.batch_created",
+        "outbox:patch-042:command.batch_created:ui_events",
         "outbox:patch-042:mission_patch.approved",
     }
-    assert {row.event_type for row in session.added if isinstance(row, OutboxEvent)} == {
-        "command.batch_created",
-        "mission_patch.approved",
-    }
+    assert [row.event_type for row in session.added if isinstance(row, OutboxEvent)].count("command.batch_created") == 2
+    assert [row.event_type for row in session.added if isinstance(row, OutboxEvent)].count("mission_patch.approved") == 1
 
 
 def test_approve_transaction_is_noop_for_already_approved_patch() -> None:
@@ -256,7 +257,7 @@ def test_reject_transaction_updates_patch_and_incident_once() -> None:
         summary="Demo incident.",
     )
     session = _FakeSession(
-        [patch, None, None],
+        [patch, None, None, None],
         get_values={(Incident, "incident-1"): incident},
     )
 
@@ -276,6 +277,71 @@ def test_reject_transaction_updates_patch_and_incident_once() -> None:
     assert session.commits == 1
     assert sum(isinstance(row, Approval) and row.status == "rejected" for row in session.added) == 1
     assert sum(isinstance(row, OutboxEvent) and row.event_type == "mission_patch.rejected" for row in session.added) == 1
+
+
+def test_reject_transaction_closes_grouped_findings() -> None:
+    patch = _pending_patch()
+    open_finding = AgentFinding(
+        id="finding-1",
+        scenario_run_id="phase-1-run",
+        agent_name="thermal_physical_agent",
+        severity="RED",
+        confidence=0.9,
+        affected_assets=["node-c"],
+        finding="Node C hotspot is above safe thermal threshold.",
+        evidence=[],
+        risk="Node C should not receive critical workloads.",
+        recommended_actions=["mark_node_suspect"],
+        status="open",
+        finding_signature="thermal_node_c_hotspot",
+        scenario_time_bucket="phase4-demo",
+    )
+    resolved_finding = AgentFinding(
+        id="finding-2",
+        scenario_run_id="phase-1-run",
+        agent_name="workload_agent",
+        severity="ORANGE",
+        confidence=0.8,
+        affected_assets=["node-a"],
+        finding="Rank lag detected.",
+        evidence=[],
+        risk="Throughput may stall.",
+        recommended_actions=["run_health_check"],
+        status="resolved",
+        finding_signature="workload_rank_lag",
+        scenario_time_bucket="phase4-demo",
+    )
+    incident = Incident(
+        id="incident-1",
+        scenario_run_id="phase-1-run",
+        incident_key="training_continuity_risk:llm-train-042:combined",
+        title="Training continuity risk",
+        severity="RED",
+        status="pending_approval",
+        finding_ids=["finding-1", "finding-2"],
+        summary="Demo incident.",
+    )
+    session = _FakeSession(
+        [patch, None, None, [open_finding, resolved_finding], None],
+        get_values={(Incident, "incident-1"): incident},
+    )
+
+    rejected_patch, created_rejection, _outbox_keys = asyncio.run(
+        reject_patch_transaction(
+            session,
+            patch_id=patch.id,
+            operator_id="operator-a",
+            operator_note="reject",
+        )
+    )
+
+    assert rejected_patch.status == "rejected"
+    assert created_rejection is True
+    assert incident.status == "rejected"
+    # Open findings close so the Commander cannot immediately re-propose the
+    # same patch; findings already in a terminal state are left untouched.
+    assert open_finding.status == "rejected"
+    assert resolved_finding.status == "resolved"
 
 
 def test_reject_transaction_is_noop_for_already_rejected_patch() -> None:

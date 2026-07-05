@@ -13,6 +13,7 @@ import {
 } from "./api/client";
 import { connectLiveSocket } from "./api/liveSocket";
 import MissionPatchPanel from "./components/MissionPatchPanel";
+import OperatorChatbot from "./components/OperatorChatbot";
 import SceneViewport from "./components/SceneViewport";
 import TelemetryPanel from "./components/TelemetryPanel";
 import { useWorldStore } from "./store/worldStore";
@@ -73,9 +74,21 @@ export default function App() {
     updateRadiationRisk();
     const radiationPoll = window.setInterval(updateRadiationRisk, 60000);
 
+    // Runtime data (next heartbeat countdown, run state) has no websocket
+    // event, so refresh it on the backend's heartbeat cadence.
+    const agentPoll = window.setInterval(() => {
+      void getAgentsStatus()
+        .then((response) => store.setAgents(response.agents))
+        .catch(() => {});
+      void getAgentsRuntime()
+        .then((response) => store.setAgentRuntime(response.agents))
+        .catch(() => {});
+    }, 10000);
+
     const disconnectLiveSocket = connectLiveSocket();
     return () => {
       window.clearInterval(radiationPoll);
+      window.clearInterval(agentPoll);
       disconnectLiveSocket();
     };
   }, []);
@@ -85,6 +98,7 @@ export default function App() {
       <TelemetryPanel />
       <SceneViewport />
       <MissionPatchPanel />
+      <OperatorChatbot />
     </div>
   );
 }

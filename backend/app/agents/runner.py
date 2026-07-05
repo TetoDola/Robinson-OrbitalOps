@@ -10,6 +10,8 @@ from app.agents.commander_agent import build_phase3_patch
 from app.agents.domain_agents import emit_phase4_heartbeats_once, run_remaining_agents_once
 from app.agents.power_orbit_agent import run_once as run_power_orbit_once
 from app.constants import StreamName
+from app.db.session import session_context
+from app.services.agent_status import emit_agent_status
 from app.services.bootstrap import wait_for_database_ready, wait_for_redis_ready
 from app.services.redis_client import get_redis
 
@@ -37,6 +39,7 @@ async def process_once() -> bool:
     stream_name, stream_messages = messages[0]
     message_id, _fields = stream_messages[0]
 
+    await _emit_commander_dispatch()
     agent_state = await read_current_agent_state()
     finding = None
     remaining_findings = []
@@ -49,6 +52,19 @@ async def process_once() -> bool:
     async with get_redis() as redis:
         await redis.xack(StreamName.telemetry_events.value, "agents", message_id)
     return True
+
+
+async def _emit_commander_dispatch() -> None:
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name="commander_agent",
+            status="dispatching",
+            phase="dispatch",
+            severity="INFO",
+            message="Runtime change detected; dispatching domain agents.",
+        )
+        await session.commit()
 
 
 async def run_forever() -> None:

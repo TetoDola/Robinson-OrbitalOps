@@ -12,6 +12,11 @@ from typing import Any, Callable
 
 from app.agents.commander_agent import build_commander_patch
 from app.agents.domain_agents import (
+    _agent_analysis_enabled,
+    _apply_agent_analysis,
+    _emit_model_fallback,
+    _emit_model_reply,
+    _emit_model_request,
     _persist_finding,
     _publish_finding,
     build_checkpoint_downlink_finding,
@@ -34,30 +39,34 @@ from app.schemas.simulator import SimulatorInjectRequest, SimulatorInjectRespons
 
 FindingBuilder = Callable[[dict[str, Any]], dict[str, Any] | None]
 
+
+class UnknownSimulatorIssueError(ValueError):
+    """Raised when the operator requests an issue type the simulator does not define."""
+
 ISSUE_AGENTS: dict[str, tuple[str, str, list[FindingBuilder]]] = {
     "workload-stall": (
         "workload_agent",
-        "Rank lag injected on Node A for scheduler/GPU mismatch detection.",
+        "workload signal detected; gathering GPU utilization, rank lag, and training state.",
         [build_workload_finding],
     ),
     "eclipse-risk": (
         "power_orbit_agent",
-        "Eclipse and battery risk injected for orbit-aware power planning.",
+        "power/orbit signal detected; gathering eclipse, battery, solar, and checkpoint state.",
         [build_power_orbit_finding],
     ),
     "radiation-spike": (
         "radiation_integrity_agent",
-        "ECC/Xid spike injected for checkpoint integrity detection.",
+        "radiation/integrity signal detected; gathering ECC, Xid, loss, and checkpoint data.",
         [build_radiation_finding],
     ),
     "downlink-constraint": (
         "checkpoint_downlink_agent",
-        "Downlink capacity limit injected for recovery artifact prioritization.",
+        "downlink constraint detected; gathering checkpoint and contact-window data.",
         [build_checkpoint_downlink_finding],
     ),
     "vibration-fault": (
         "vibration_health_agent",
-        "Structure-borne vibration anomaly injected for cooling-loop correlation.",
+        "vibration signal detected; gathering cooling and hotspot correlation data.",
         [build_vibration_finding],
     ),
 }
@@ -67,7 +76,7 @@ async def inject_named_issue(issue: str, request: SimulatorInjectRequest) -> Sim
     if issue == "thermal-frame":
         return await inject_thermal_frame(request)
     if issue not in ISSUE_AGENTS:
-        raise ValueError(f"Unknown simulator issue: {issue}")
+        raise UnknownSimulatorIssueError(f"Unknown simulator issue: {issue}")
 
     agent_name, status_message, builders = ISSUE_AGENTS[issue]
     timestamp = datetime.now(timezone.utc)
@@ -82,13 +91,14 @@ async def inject_named_issue(issue: str, request: SimulatorInjectRequest) -> Sim
             reason=f"manual_injection:{issue}",
         )
         await _pause_scenario(session, issue, timestamp)
+        await _emit_commander_dispatch(session, agent_name)
         await emit_agent_status(
             session,
             agent_name=agent_name,
-            status="detecting",
+            status="analyzing",
             phase="detect",
             severity="ORANGE",
-            message=status_message,
+            message=f"Commander dispatch received; {status_message}",
         )
         session.add(
             TelemetryEvent(
@@ -141,13 +151,14 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
             reason="thermal_image_input",
         )
         await _pause_scenario(session, "thermal-frame", timestamp)
+        await _emit_commander_dispatch(session, "thermal_physical_agent")
         await emit_agent_status(
             session,
             agent_name="thermal_physical_agent",
             status="analyzing",
             phase="detect",
             severity="ORANGE",
-            message="Thermal frame received; checking visual hotspot evidence.",
+            message="Commander dispatch received; high temperature detected, gathering thermal frame, cooling, and vibration data.",
         )
         session.add(
             TelemetryEvent(
@@ -170,6 +181,16 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
     )
 
     deterministic_finding = _thermal_image_finding(world_state.state, latest_input, None)
+    async with session_context() as session:
+        await emit_agent_status(
+            session,
+            agent_name="thermal_physical_agent",
+            status="analyzing",
+            phase="model",
+            severity="ORANGE",
+            message=f"Sending thermal frame and telemetry to {settings.crusoe_multimodal_model}.",
+        )
+        await session.commit()
     model_result = await analyze_thermal_ir_image(
         image_data_url,
         state=world_state.state,
@@ -238,12 +259,30 @@ async def _run_builders(state: dict[str, Any], builders: list[FindingBuilder]) -
         payload = builder(agent_state)
         if payload is None:
             continue
+        if _agent_analysis_enabled():
+            await _emit_model_request(payload["agent_name"])
+        payload, analysis = await _apply_agent_analysis(agent_state, payload)
+        if analysis:
+            await _emit_model_reply(payload["agent_name"], analysis)
+        elif _agent_analysis_enabled():
+            await _emit_model_fallback(payload["agent_name"])
         finding = await _persist_finding(payload)
         if finding is None:
             continue
         await _publish_finding(finding, payload)
         finding_ids.append(finding.id)
     return finding_ids
+
+
+async def _emit_commander_dispatch(session, agent_name: str) -> None:
+    await emit_agent_status(
+        session,
+        agent_name="commander_agent",
+        status="dispatching",
+        phase="dispatch",
+        severity="INFO",
+        message=f"Runtime change detected; dispatching {agent_name.replace('_', ' ')}.",
+    )
 
 
 async def _pause_scenario(session, issue: str, timestamp: datetime) -> None:
@@ -329,7 +368,7 @@ def _issue_state_patch(issue: str, state: dict[str, Any], request: SimulatorInje
                 {request.asset_id: {"status": "cooling_loop_risk", "temp_c": 84, "vibration_score": 0.91}},
             ),
         }
-    raise ValueError(f"Unsupported simulator issue: {issue}")
+    raise UnknownSimulatorIssueError(f"Unsupported simulator issue: {issue}")
 
 
 def _thermal_state_patch(state: dict[str, Any], latest_input: dict[str, Any]) -> dict[str, Any]:
@@ -401,11 +440,20 @@ def _analysis_status(model_result: dict[str, Any] | None) -> str:
 
 
 def _thermal_status_message(analysis_status: str, model_result: dict[str, Any] | None) -> str:
-    if model_result and model_result.get("summary"):
-        return str(model_result["summary"])
+    if model_result:
+        model = str(model_result.get("model") or settings.crusoe_multimodal_model)
+        return f"{model} replied in {_latency_seconds(model_result.get('latency_ms'))}; sending hotspot report to Commander."
     if analysis_status == "blocked_missing_crusoe_config":
         return "Thermal frame stored; Nemotron analysis is waiting for Crusoe credentials."
     return "Thermal frame stored; deterministic telemetry still indicates hotspot risk."
+
+
+def _latency_seconds(value: Any) -> str:
+    try:
+        milliseconds = float(value)
+    except (TypeError, ValueError):
+        return "unknown time"
+    return f"{milliseconds / 1000:.1f}s"
 
 
 def _dedupe(values: list[Any]) -> list[str]:

@@ -50,6 +50,7 @@ export interface ThermalModelResult {
   needs_human_review?: boolean;
   model?: string;
   provider?: string;
+  latency_ms?: number;
 }
 
 export interface RadiationState {
@@ -234,12 +235,16 @@ export interface AgentRuntimeItem {
   agent: string;
   display_name: string;
   trigger_mode: string;
+  trigger_condition: string;
+  watched_fields: string[];
   interval_seconds: number;
+  heartbeat_seconds: number;
   run_state: string;
   last_run_at: string;
   next_run_at: string;
   seconds_until_next_run: number;
   missed_runs: number;
+  last_triggered_by: string;
   last_result: string;
 }
 
@@ -255,6 +260,33 @@ export interface AiStatusResponse {
   status: string;
   text_model: string;
   multimodal_model: string;
+}
+
+export type ChatRole = "user" | "assistant";
+
+export interface ChatTurn {
+  role: ChatRole;
+  content: string;
+}
+
+export interface ChatContextSummary {
+  scenario: string | null;
+  world_version: number | null;
+  agent_count: number;
+  open_findings: number;
+  command_count: number;
+  queued_commands: number;
+  running_commands: number;
+  succeeded_commands: number;
+  active_patch_id: string | null;
+  active_patch_status: string | null;
+}
+
+export interface OperatorChatResponse {
+  message: ChatTurn;
+  source: "crusoe" | "deterministic";
+  model: string | null;
+  context: ChatContextSummary;
 }
 
 export interface AgentFinding {
@@ -283,6 +315,8 @@ export interface Incident {
   status: string;
   finding_ids: string[];
   summary: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface IncidentsResponse {
