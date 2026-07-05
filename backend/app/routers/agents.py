@@ -64,12 +64,14 @@ async def list_agent_statuses(
 @router.get("/agents/ai-status", response_model=AiStatusResponse, tags=["agents"])
 async def get_ai_status() -> AiStatusResponse:
     configured = bool(settings.crusoe_api_key)
-    enabled = bool(settings.crusoe_enabled and configured)
+    enabled = bool(settings.crusoe_enabled)
+    connected = bool(enabled and configured)
     return AiStatusResponse(
         provider="crusoe",
         enabled=enabled,
         configured=configured,
-        status="connected" if enabled else "disabled_missing_config" if not configured else "disabled_by_flag",
+        connected=connected,
+        status="connected" if connected else "missing_api_key" if enabled and not configured else "disabled_by_flag",
         text_model=settings.crusoe_model,
         multimodal_model=settings.crusoe_multimodal_model,
     )

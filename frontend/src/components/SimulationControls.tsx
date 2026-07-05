@@ -149,8 +149,8 @@ export default function SimulationControls() {
 
       <div className="ai-status-row">
         <span>AI</span>
-        <strong className={aiStatus?.enabled ? "status-green" : "status-orange"}>
-          {aiStatus?.enabled ? "connected" : "offline"}
+        <strong className={aiStatus?.connected ? "status-green" : aiStatus?.enabled ? "status-orange" : "status-red"}>
+          {aiStatus?.connected ? "connected" : aiStatus?.enabled ? "missing key" : "offline"}
         </strong>
         <small>{aiStatus?.multimodal_model ?? "Nemotron status pending"}</small>
       </div>

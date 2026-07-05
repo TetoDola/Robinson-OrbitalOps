@@ -79,6 +79,7 @@ class AiStatusResponse(BaseModel):
     provider: str
     enabled: bool
     configured: bool
+    connected: bool
     status: str
     text_model: str
     multimodal_model: str

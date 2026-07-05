@@ -146,6 +146,7 @@ export interface AiStatusResponse {
   provider: string;
   enabled: boolean;
   configured: boolean;
+  connected: boolean;
   status: string;
   text_model: string;
   multimodal_model: string;
