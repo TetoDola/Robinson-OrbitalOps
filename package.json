@@ -1,0 +1,15 @@
+{
+  "name": "robinson-orbitalops",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OrbitOps command center with separated frontend and backend telemetry entry points.",
+  "scripts": {
+    "dev:frontend": "node frontend/server.mjs",
+    "dev:backend": "node backend/server.mjs",
+    "check:json": "jq empty backend/data/telemetry.mock.json schemas/orbitalops.telemetry.v1.schema.json"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
