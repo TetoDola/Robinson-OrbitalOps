@@ -36,10 +36,11 @@ services:
     build: ./backend
     container_name: orbitops-api
     command: ["python", "-m", "app.services.bootstrap"]
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
-      CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
       CRUSOE_MODEL: ${CRUSOE_MODEL:-moonshotai/Kimi-K2.6}
       CRUSOE_MULTIMODAL_MODEL: ${CRUSOE_MULTIMODAL_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
@@ -82,10 +83,11 @@ services:
   orbitops-agents:
     build: ./backend
     command: ["python", "-m", "app.agents.runner"]
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://orbitops:orbitops@postgres:5432/orbitops
       REDIS_URL: redis://redis:6379/0
-      CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
       CRUSOE_MODEL: ${CRUSOE_MODEL:-moonshotai/Kimi-K2.6}
       CRUSOE_MULTIMODAL_MODEL: ${CRUSOE_MULTIMODAL_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
