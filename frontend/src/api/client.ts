@@ -4,10 +4,11 @@ import type {
   CommandsResponse,
   IncidentsResponse,
   MissionPatch,
+  OrbitalOpsTelemetryResponse,
   WorldStateResponse,
 } from "../types/backend";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? "";
 
 function apiUrl(path: string): string {
   if (!API_BASE_URL) {
@@ -34,6 +35,10 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getWorldState(): Promise<WorldStateResponse> {
   return fetchJson<WorldStateResponse>("/world-state");
+}
+
+export function getTelemetrySnapshot(): Promise<OrbitalOpsTelemetryResponse> {
+  return fetchJson<OrbitalOpsTelemetryResponse>("/api/telemetry");
 }
 
 export function getAgentsStatus(): Promise<AgentsStatusResponse> {

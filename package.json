@@ -7,7 +7,7 @@
   "scripts": {
     "dev:frontend": "node frontend/server.mjs",
     "dev:backend": "node backend/server.mjs",
-    "check:json": "jq empty backend/data/telemetry.mock.json schemas/orbitalops.telemetry.v1.schema.json"
+    "check:json": "jq empty backend/data/telemetry.mock.json backend/data/radiation-environment.mock.json schemas/orbitalops.telemetry.v1.schema.json"
   },
   "engines": {
     "node": ">=18"

@@ -15,11 +15,8 @@ export default defineConfig({
       "/incidents": apiTarget,
       "/mission-patches": apiTarget,
       "/simulator": apiTarget,
+      "/api": apiTarget,
       "/health": apiTarget,
       "/ws": {
         target: wsTarget,
         ws: true,
-      },
-    },
-  },
-});

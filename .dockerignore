@@ -1,0 +1,6 @@
+.git
+node_modules
+frontend/node_modules
+frontend/dist
+.DS_Store
+npm-debug.log*

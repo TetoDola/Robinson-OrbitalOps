@@ -1,15 +1,11 @@
-FROM python:3.11-slim
+FROM node:22-alpine
 
 WORKDIR /app
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+COPY package.json ./
+COPY backend ./backend
 
-COPY pyproject.toml .
+ENV PORT=4000
+EXPOSE 4000
 
-RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir .
-
-COPY . .
-
-CMD ["python", "-m", "app.services.bootstrap"]
+CMD ["node", "backend/server.mjs"]

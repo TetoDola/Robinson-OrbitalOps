@@ -2,9 +2,8 @@ import { useEffect } from "react";
 
 import {
   getActiveMissionPatch,
-  getAgentsStatus,
   getCommands,
-  getIncidents,
+  getTelemetrySnapshot,
   getWorldState,
 } from "./api/client";
 import { connectLiveSocket } from "./api/liveSocket";
@@ -20,11 +19,9 @@ export default function App() {
 
     void Promise.allSettled([
       getWorldState(),
-      getAgentsStatus(),
       getCommands(),
-      getIncidents(),
       getActiveMissionPatch(),
-    ]).then(([worldResult, agentsResult, commandsResult, incidentsResult, patchResult]) => {
+    ]).then(([worldResult, commandsResult, patchResult]) => {
       if (worldResult.status === "fulfilled") {
         store.setWorldState(
           worldResult.value.state,
@@ -32,21 +29,35 @@ export default function App() {
           worldResult.value.scenario_run_id,
         );
       }
-      if (agentsResult.status === "fulfilled") {
-        store.setAgents(agentsResult.value.agents);
-      }
       if (commandsResult.status === "fulfilled") {
         store.setCommands(commandsResult.value.commands);
-      }
-      if (incidentsResult.status === "fulfilled") {
-        store.setIncidents(incidentsResult.value.incidents);
       }
       if (patchResult.status === "fulfilled") {
         store.setMissionPatch(patchResult.value.mission_patch);
       }
     });
 
-    return connectLiveSocket();
+    const updateRadiationRisk = () => {
+      void getTelemetrySnapshot()
+        .then((snapshot) => {
+          const activeSatelliteId = snapshot.mission?.activeSatelliteId;
+          const satellite =
+            snapshot.satellites.find((item) => item.id === activeSatelliteId) ??
+            snapshot.satellites[0];
+          store.setRadiationRisk(satellite?.radiationRisk ?? null);
+        })
+        .catch(() => {
+          store.setRadiationRisk(null);
+        });
+    };
+    updateRadiationRisk();
+    const radiationPoll = window.setInterval(updateRadiationRisk, 60000);
+
+    const disconnectLiveSocket = connectLiveSocket();
+    return () => {
+      window.clearInterval(radiationPoll);
+      disconnectLiveSocket();
+    };
   }, []);
 
   const view = useAppStore((state) => state.view);

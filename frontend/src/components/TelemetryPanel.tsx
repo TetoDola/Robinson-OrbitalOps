@@ -143,8 +143,7 @@ export default function TelemetryPanel() {
             ariaLabel={`Downlink window ${telemetry.downlink}, checkpoint needs ${CHECKPOINT_GB} gigabytes`}
           />
         </div>
-
-        <div className="risk-row is-info">
+        <div className="risk-row is-info" title={telemetry.radiationExplanation}>
           <span>Radiation risk</span>
           <strong>{telemetry.radiation}</strong>
         </div>
@@ -185,9 +184,7 @@ export default function TelemetryPanel() {
       </div>
       </section>
 
-      <div className="rail-footer">
-        <span>{demoResetAt ? "baseline reset" : "human approval required"}</span>
-      </div>
+      <div className="rail-footer">{demoResetAt ? "baseline reset" : "human approval required"}</div>
     </aside>
   );
 }

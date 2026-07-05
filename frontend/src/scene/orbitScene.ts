@@ -2,7 +2,13 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import { useWorldStore, type TelemetrySnapshot } from "../store/worldStore";
-import type { WorldState } from "../types/backend";
+import type {
+  ProcessedRadiationRisk,
+  RadiationFluxCell,
+  RadiationPoint,
+  RadiationZone,
+  WorldState,
+} from "../types/backend";
 
 export interface OrbitScene {
   start: () => void;
@@ -217,6 +223,29 @@ function disposeObject(object: THREE.Object3D) {
   }
 }
 
+function latLonToVector(latDeg: number, lonDeg: number, radius = 1.03) {
+  const lat = THREE.MathUtils.degToRad(latDeg);
+  const lon = THREE.MathUtils.degToRad(lonDeg);
+  const cosLat = Math.cos(lat);
+  return new THREE.Vector3(
+    Math.cos(lon) * cosLat * radius,
+    Math.sin(lat) * radius,
+    -Math.sin(lon) * cosLat * radius,
+  );
+}
+
+function colorForRisk(score = 0) {
+  if (score >= 75) return "#ff4f58";
+  if (score >= 50) return "#ff9f45";
+  if (score >= 25) return "#f0d96a";
+  return "#64f0c8";
+}
+
+function setBaseOpacity(object: THREE.Object3D, opacity: number, pulseRate = 0.6) {
+  object.userData.baseOpacity = opacity;
+  object.userData.pulseRate = pulseRate;
+}
+
 export function createOrbitScene(container: HTMLElement): OrbitScene {
   const scene = new THREE.Scene();
   const initialRect = container.getBoundingClientRect();
@@ -358,6 +387,13 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
 
   const earth = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 96), earthMaterial);
   scene.add(earth);
+  const radiationProjection = new THREE.Group();
+  radiationProjection.name = "radiation-projection";
+  earth.add(radiationProjection);
+  let radiationFrameGroups: THREE.Group[] = [];
+  let activeRadiationFrame = -1;
+  let radiationPlaybackSeconds = 90;
+  const radiationGlowTexture = makeGlowTexture("rgba(255,255,255,0.95)", "rgba(100,240,210,0.35)");
 
   const clouds = new THREE.Mesh(
     new THREE.SphereGeometry(1.008, 64, 64),
@@ -480,7 +516,268 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
   function updateWorldState(worldState: WorldState | null) {
     currentWorldState = worldState;
     const lineMaterial = radiationBand.material as THREE.LineBasicMaterial;
-    lineMaterial.opacity = worldState?.radiation?.risk?.toLowerCase().includes("elevated") ? 0.48 : 0.24;
+    const risk = useWorldStore.getState().radiationRisk;
+    const riskLevel = risk?.radiationLevel ?? worldState?.radiation?.risk ?? "";
+    lineMaterial.opacity = ["MEDIUM", "HIGH", "CRITICAL"].some((level) => riskLevel.toUpperCase().includes(level))
+      ? 0.48
+      : 0.24;
+  }
+
+  function clearRadiationProjection() {
+    const children = [...radiationProjection.children];
+    children.forEach((child) => {
+      radiationProjection.remove(child);
+      child.traverse(disposeObject);
+    });
+    radiationFrameGroups = [];
+    activeRadiationFrame = -1;
+  }
+
+  function makeRadiationTube(points: RadiationPoint[], color: string, opacity: number, radius: number, tubeRadius: number) {
+    if (points.length < 2) {
+      return null;
+    }
+    const vectors = points.map((point) => latLonToVector(point.latDeg, point.lonDeg, radius));
+    const curve = new THREE.CatmullRomCurve3(vectors, false, "catmullrom", 0.2);
+    const geometry = new THREE.TubeGeometry(curve, Math.max(8, vectors.length * 3), tubeRadius, 8, false);
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    setBaseOpacity(mesh, opacity);
+    return mesh;
+  }
+
+  function makeRadiationSprite(point: RadiationPoint, color: string, opacity: number, radius: number, scale: number) {
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: radiationGlowTexture,
+        color,
+        transparent: true,
+        opacity,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    sprite.position.copy(latLonToVector(point.latDeg, point.lonDeg, radius));
+    sprite.scale.setScalar(scale);
+    setBaseOpacity(sprite, opacity, 1.1);
+    return sprite;
+  }
+
+  function makeZoneMaterial(color: string, opacity: number) {
+    return new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+  }
+
+  function renderFluxCells(target: THREE.Group, cells: RadiationFluxCell[] | undefined) {
+    if (!cells?.length) return;
+    const vertices: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+    const color = new THREE.Color();
+    const radius = 1.052;
+    cells.forEach((cell) => {
+      const vertexOffset = vertices.length / 3;
+      const corners = [
+        latLonToVector(cell.latMinDeg, cell.lonMinDeg, radius),
+        latLonToVector(cell.latMaxDeg, cell.lonMinDeg, radius),
+        latLonToVector(cell.latMinDeg, cell.lonMaxDeg, radius),
+        latLonToVector(cell.latMaxDeg, cell.lonMaxDeg, radius),
+      ];
+      corners.forEach((corner) => {
+        vertices.push(corner.x, corner.y, corner.z);
+      });
+      color.set(cell.color);
+      for (let index = 0; index < 4; index += 1) {
+        colors.push(color.r, color.g, color.b);
+      }
+      indices.push(vertexOffset, vertexOffset + 1, vertexOffset + 2, vertexOffset + 1, vertexOffset + 3, vertexOffset + 2);
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.48,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = "poes-style-flux-grid";
+    setBaseOpacity(mesh, 0.48, 0.5);
+    target.add(mesh);
+  }
+
+  function makeBandZoneMesh(zone: RadiationZone, opacity: number, radius: number) {
+    const points = zone.points;
+    if (points.length < 2) return null;
+    const halfWidth = (zone.widthDeg ?? 8) / 2;
+    const vertices: number[] = [];
+    const indices: number[] = [];
+    points.forEach((point) => {
+      const upper = latLonToVector(point.latDeg + halfWidth, point.lonDeg, radius);
+      const lower = latLonToVector(point.latDeg - halfWidth, point.lonDeg, radius);
+      vertices.push(upper.x, upper.y, upper.z, lower.x, lower.y, lower.z);
+    });
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const a = index * 2;
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, makeZoneMaterial(zone.color, opacity));
+    setBaseOpacity(mesh, opacity, zone.pulseRate);
+    return mesh;
+  }
+
+  function makeHotspotZoneMesh(zone: RadiationZone, opacity: number, radius: number) {
+    if (zone.points.length < 3) return null;
+    const centerLat = zone.points.reduce((total, point) => total + point.latDeg, 0) / zone.points.length;
+    const centerLon = zone.points.reduce((total, point) => total + point.lonDeg, 0) / zone.points.length;
+    const center = latLonToVector(centerLat, centerLon, radius + 0.002);
+    const vertices = [center.x, center.y, center.z];
+    zone.points.forEach((point) => {
+      const edge = latLonToVector(point.latDeg, point.lonDeg, radius);
+      vertices.push(edge.x, edge.y, edge.z);
+    });
+    const indices: number[] = [];
+    for (let index = 1; index < zone.points.length; index += 1) {
+      indices.push(0, index, index + 1);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(geometry, makeZoneMaterial(zone.color, opacity));
+    setBaseOpacity(mesh, opacity, zone.pulseRate);
+    return mesh;
+  }
+
+  function addRadiationSprites(
+    target: THREE.Group,
+    points: RadiationPoint[],
+    color: string,
+    opacity: number,
+    radius: number,
+    every: number,
+    scale: number,
+  ) {
+    points.forEach((point, index) => {
+      if (index % every === 0) {
+        target.add(makeRadiationSprite(point, color, opacity, radius, scale));
+      }
+    });
+  }
+
+  function renderRadiationZone(target: THREE.Group, zone: RadiationZone) {
+    const opacity = THREE.MathUtils.clamp(zone.opacity, 0.08, 0.82);
+    const radius = zone.altitudeScale ?? 1.045;
+    const primary =
+      zone.type === "particle_hotspot"
+        ? makeHotspotZoneMesh(zone, opacity, radius)
+        : makeBandZoneMesh(zone, opacity, radius);
+    if (primary) {
+      target.add(primary);
+    }
+
+    if (zone.type === "auroral_curtain") {
+      for (let layer = 1; layer <= 3; layer += 1) {
+        const upper = makeBandZoneMesh(
+          {
+            ...zone,
+            opacity: opacity * (0.36 / layer),
+            widthDeg: (zone.widthDeg ?? 8) * (1 - layer * 0.12),
+          },
+          opacity * (0.36 / layer),
+          radius + layer * 0.024,
+        );
+        if (upper) {
+          setBaseOpacity(upper, opacity * (0.46 / layer), (zone.pulseRate ?? 0.8) + layer * 0.15);
+          target.add(upper);
+        }
+      }
+      addRadiationSprites(target, zone.points, zone.color, opacity * 0.55, radius + 0.055, 4, 0.055);
+      return;
+    }
+
+    if (zone.type === "particle_hotspot") {
+      const inner = zone.points.map((point) => ({
+        ...point,
+        latDeg: point.latDeg * 0.92 + -25 * 0.08,
+        lonDeg: point.lonDeg * 0.92 + -45 * 0.08,
+      }));
+      const hotCore = makeHotspotZoneMesh({ ...zone, points: inner, color: "#ff6f4f" }, opacity * 0.62, radius + 0.018);
+      if (hotCore) {
+        setBaseOpacity(hotCore, opacity * 0.7, zone.pulseRate ?? 0.45);
+        target.add(hotCore);
+      }
+      addRadiationSprites(target, zone.points, "#ffd082", opacity * 0.5, radius + 0.035, 3, 0.045);
+      return;
+    }
+
+    if (zone.type === "solar_particle_wash") {
+      const wide = makeBandZoneMesh(
+        { ...zone, color: "#fff0a6", widthDeg: (zone.widthDeg ?? 18) * 1.45 },
+        opacity * 0.28,
+        radius + 0.034,
+      );
+      if (wide) {
+        setBaseOpacity(wide, opacity * 0.36, zone.pulseRate ?? 1.2);
+        target.add(wide);
+      }
+      addRadiationSprites(target, zone.points, "#ffe5a0", opacity * 0.42, radius + 0.06, 5, 0.06);
+    }
+  }
+
+  function renderRadiationTrajectory(target: THREE.Group, points: RadiationPoint[]) {
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index];
+      const end = points[index + 1];
+      const score = Math.max(start.riskScore ?? 0, end.riskScore ?? 0);
+      const segment = makeRadiationTube([start, end], colorForRisk(score), 0.52, 1.09, 0.0045);
+      if (segment) {
+        setBaseOpacity(segment, 0.52, 0.95);
+        target.add(segment);
+      }
+    }
+    addRadiationSprites(target, points, "#ffffff", 0.42, 1.115, 2, 0.04);
+  }
+
+  function updateRadiationProjection(risk: ProcessedRadiationRisk | null) {
+    clearRadiationProjection();
+    if (!risk?.visualization) {
+      return;
+    }
+    radiationPlaybackSeconds = Math.max(12, Number(risk.visualization.playbackSeconds ?? 90));
+    const frames = risk.visualization.frames?.length ? risk.visualization.frames : [{ zones: risk.visualization.zones }];
+    radiationFrameGroups = frames.map((frame, index) => {
+      const group = new THREE.Group();
+      group.name = `radiation-frame-${index}`;
+      group.visible = index === 0;
+      renderFluxCells(group, frame.fluxCells);
+      frame.zones.forEach((zone) => renderRadiationZone(group, zone));
+      radiationProjection.add(group);
+      return group;
+    });
+    activeRadiationFrame = radiationFrameGroups.length ? 0 : -1;
+    renderRadiationTrajectory(radiationProjection, risk.visualization.trajectory);
   }
 
   function setInspection(open: boolean) {
@@ -497,6 +794,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
     const sceneLon = THREE.MathUtils.radToDeg(Math.atan2(-normalized.z, normalized.x));
 
     const backend = currentWorldState;
+    const radiationRisk = useWorldStore.getState().radiationRisk;
     const lat = backend?.satellite?.lat ?? sceneLat;
     const lon = backend?.satellite?.lon ?? sceneLon;
     const station = stationForLongitude(lon);
@@ -529,7 +827,11 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
       battery: percent(battery),
       solar: `${solarInput.toFixed(1)} kW`,
       eclipse: eclipseLabel,
-      radiation: phaseLabel(backend?.radiation?.risk ?? "Elevated"),
+      radiation: radiationRisk
+        ? `${radiationRisk.radiationLevel} ${Math.round(radiationRisk.radiationRiskScore)}`
+        : phaseLabel(backend?.radiation?.risk ?? "Elevated"),
+      radiationExplanation: radiationRisk?.explanation,
+      radiationRecommendedAction: radiationRisk?.recommendedAction,
       eccTrend: eccErrors > 850 ? "Rising" : "Nominal",
       trustedCheckpoint: backend?.training?.last_trusted_checkpoint ?? "ckpt-184500",
       latestCheckpoint: `${latestCheckpoint} ${latestStatus}`,
@@ -600,6 +902,23 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
     computeSunDirection(nowMs, sunDirection);
     sun.position.copy(sunDirection).multiplyScalar(50);
     sunSprite.position.copy(sunDirection).multiplyScalar(90);
+    if (radiationFrameGroups.length > 1) {
+      const loopPosition = (performance.now() / 1000) % radiationPlaybackSeconds;
+      const nextFrame = Math.floor((loopPosition / radiationPlaybackSeconds) * radiationFrameGroups.length);
+      if (nextFrame !== activeRadiationFrame) {
+        radiationFrameGroups.forEach((group, index) => {
+          group.visible = index === nextFrame;
+        });
+        activeRadiationFrame = nextFrame;
+      }
+    }
+    radiationProjection.traverse((object) => {
+      const material = (object as THREE.Mesh | THREE.Sprite).material as THREE.Material & { opacity?: number };
+      if (material && typeof material.opacity === "number" && object.userData.baseOpacity) {
+        const pulse = 0.78 + Math.sin(nowS * (object.userData.pulseRate ?? 0.7) + object.id * 0.17) * 0.22;
+        material.opacity = THREE.MathUtils.clamp(object.userData.baseOpacity * pulse, 0.04, 0.88);
+      }
+    });
 
     const a = ((2 * Math.PI * nowS) / ORBIT_PERIOD_S) % (2 * Math.PI);
     satellite.position.set(Math.cos(a) * ORBIT_RADIUS, 0, Math.sin(a) * ORBIT_RADIUS);
@@ -681,6 +1000,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
 
   const unsubscribers = [
     useWorldStore.subscribe((state) => state.worldState, updateWorldState),
+    useWorldStore.subscribe((state) => state.radiationRisk, updateRadiationProjection),
     useWorldStore.subscribe((state) => state.simSpeed, setSpeed),
     useWorldStore.subscribe(
       (state) => state.followNode,
@@ -704,6 +1024,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
     start: () => {
       resize();
       updateWorldState(currentWorldState);
+      updateRadiationProjection(useWorldStore.getState().radiationRisk);
       renderer.setAnimationLoop(animate);
     },
     destroy: () => {
@@ -724,6 +1045,7 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
       nightMap.dispose();
       cloudsMap.dispose();
       specMap.dispose();
+      radiationGlowTexture.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       reticle.remove();

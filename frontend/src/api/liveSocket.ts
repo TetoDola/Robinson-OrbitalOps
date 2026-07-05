@@ -1,7 +1,7 @@
 import { useWorldStore } from "../store/worldStore";
 import type { BackendLiveEvent } from "../types/backend";
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? "";
+const WS_URL = import.meta.env?.VITE_WS_URL ?? "";
 
 function defaultWsUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";

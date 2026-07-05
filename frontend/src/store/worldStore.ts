@@ -7,6 +7,7 @@ import type {
   Command,
   Incident,
   MissionPatch,
+  ProcessedRadiationRisk,
   WorldState,
 } from "../types/backend";
 
@@ -25,6 +26,8 @@ export interface TelemetrySnapshot {
   solar: string;
   eclipse: string;
   radiation: string;
+  radiationExplanation?: string;
+  radiationRecommendedAction?: string;
   eccTrend: string;
   trustedCheckpoint: string;
   latestCheckpoint: string;
@@ -93,6 +96,7 @@ interface WorldStore {
   worldVersion: number | null;
   scenarioRunId: string | null;
   telemetry: TelemetrySnapshot;
+  radiationRisk: ProcessedRadiationRisk | null;
   metrics: TelemetryMetrics | null;
   metricsHistory: MetricsHistory;
   agents: AgentStatusItem[];
@@ -109,6 +113,7 @@ interface WorldStore {
   demoResetAt: string | null;
   setWorldState: (state: WorldState, version?: number | null, scenarioRunId?: string | null) => void;
   setTelemetry: (telemetry: TelemetrySnapshot) => void;
+  setRadiationRisk: (radiationRisk: ProcessedRadiationRisk | null) => void;
   pushMetrics: (metrics: TelemetryMetrics) => void;
   setAgents: (agents: AgentStatusItem[]) => void;
   upsertAgent: (agent: AgentStatusItem) => void;
@@ -130,6 +135,7 @@ export const useWorldStore = create<WorldStore>()(
     worldVersion: null,
     scenarioRunId: null,
     telemetry: initialTelemetry,
+    radiationRisk: null,
     metrics: null,
     metricsHistory: emptyHistory(),
     agents: [],
@@ -147,6 +153,7 @@ export const useWorldStore = create<WorldStore>()(
     setWorldState: (worldState, worldVersion = null, scenarioRunId = null) =>
       set({ worldState, worldVersion, scenarioRunId }),
     setTelemetry: (telemetry) => set({ telemetry }),
+    setRadiationRisk: (radiationRisk) => set({ radiationRisk }),
     pushMetrics: (metrics) =>
       set((state) => {
         const history = { ...state.metricsHistory };
