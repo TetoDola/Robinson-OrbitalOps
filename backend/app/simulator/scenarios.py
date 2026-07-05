@@ -1,0 +1,11 @@
+"""Scripted demo scenario constants."""
+
+from __future__ import annotations
+
+from app.constants import CANONICAL_WORLD_STATE, DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID
+
+
+DEFAULT_TICK_SECONDS = 1
+SCENARIO_NAME = DEMO_SCENARIO_NAME
+SCENARIO_RUN_ID = DEMO_SCENARIO_RUN_ID
+INITIAL_STATE = CANONICAL_WORLD_STATE
