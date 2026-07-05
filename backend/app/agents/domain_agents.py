@@ -9,14 +9,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.config import settings
 from app.constants import DEMO_SCENARIO_RUN_ID, StreamName
 from app.db.models import AgentFinding, AgentStatus
 from app.db.session import session_context
 from app.agents.data_context import read_current_agent_state
 from app.services.agent_status import emit_agent_status
 from app.services.event_bus import publish_stream_event
-from app.services.llm_client import analyze_agent_finding
+from app.services.llm_client import active_text_model_label, agent_analysis_is_enabled, analyze_agent_finding
 
 
 def build_workload_finding(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -289,7 +288,7 @@ async def _emit_model_request(agent_name: str) -> None:
             status="analyzing",
             phase="model",
             severity="INFO",
-            message=f"Sending gathered details to {settings.crusoe_model}.",
+            message=f"Sending gathered details to {active_text_model_label()}.",
         )
         await session.commit()
 
@@ -303,7 +302,7 @@ async def _emit_model_reply(agent_name: str, analysis: dict[str, Any]) -> None:
             phase="model",
             severity="INFO",
             message=(
-                f"{settings.crusoe_model} replied in {_latency_seconds(analysis.get('latency_ms'))}; "
+                f"{analysis.get('model') or active_text_model_label()} replied in {_latency_seconds(analysis.get('latency_ms'))}; "
                 "sending analyzed finding to Commander."
             ),
         )
@@ -334,10 +333,10 @@ async def _apply_agent_analysis(state: dict[str, Any], payload: dict[str, Any]) 
 
     evidence = list(payload["evidence"])
     if analysis.get("summary"):
-        evidence.append(f"Crusoe advisory summary: {analysis['summary']}")
-    evidence.extend(f"Crusoe evidence: {item}" for item in analysis.get("evidence", []))
+        evidence.append(f"{_provider_label(analysis)} advisory summary: {analysis['summary']}")
+    evidence.extend(f"{_provider_label(analysis)} evidence: {item}" for item in analysis.get("evidence", []))
     if analysis.get("latency_ms") is not None:
-        evidence.append(f"{settings.crusoe_model} replied in {_latency_seconds(analysis['latency_ms'])}.")
+        evidence.append(f"{analysis.get('model') or active_text_model_label()} replied in {_latency_seconds(analysis['latency_ms'])}.")
     recommended_actions = _dedupe_strings([*payload["recommended_actions"], *analysis.get("recommended_actions", [])])
     confidence = analysis.get("confidence")
     return (
@@ -525,7 +524,12 @@ def _finding(
 
 
 def _agent_analysis_enabled() -> bool:
-    return bool(settings.crusoe_enabled and settings.crusoe_api_key and settings.crusoe_agent_analysis_enabled)
+    return agent_analysis_is_enabled()
+
+
+def _provider_label(analysis: dict[str, Any]) -> str:
+    provider = str(analysis.get("provider") or "model").lower()
+    return "OpenRouter" if provider == "openrouter" else "Crusoe" if provider == "crusoe" else "Model"
 
 
 def _simple_trigger_message(agent_name: str) -> str:

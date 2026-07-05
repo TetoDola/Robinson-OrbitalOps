@@ -8,7 +8,7 @@ from typing import Any
 
 from app.config import settings
 from app.schemas.chat import ChatTurn
-from app.services.llm_client import answer_operator_chat
+from app.services.llm_client import active_text_model_label, answer_operator_chat
 
 
 SEVERITY_RANK = {
@@ -66,8 +66,8 @@ async def build_operator_chat_reply(
     if model_reply:
         return OperatorChatReply(
             content=_bounded(model_reply, MAX_REPLY_CHARS),
-            source="crusoe",
-            model=settings.crusoe_model,
+            source=_model_source(),
+            model=active_text_model_label(),
             context_summary=_context_summary(context),
         )
 
@@ -164,6 +164,12 @@ def _context_payload(
         "world_snapshots": context["world_snapshots"],
     }
     return context
+
+
+def _model_source() -> str:
+    if settings.crusoe_enabled and settings.crusoe_api_key:
+        return "crusoe"
+    return "openrouter"
 
 
 def _scenario_run_payload(row: Any) -> dict[str, Any]:

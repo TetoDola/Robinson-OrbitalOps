@@ -24,6 +24,7 @@ from app.schemas.agent import (
     ThermalImageInputResponse,
 )
 from app.schemas.simulator import SimulatorInjectRequest
+from app.services.llm_client import active_multimodal_model_label, active_provider_label, active_text_model_label, llm_is_configured
 from app.services.manual_simulation import inject_thermal_frame
 
 router = APIRouter()
@@ -126,17 +127,27 @@ async def list_agent_statuses(
 
 @router.get("/agents/ai-status", response_model=AiStatusResponse, tags=["agents"])
 async def get_ai_status() -> AiStatusResponse:
-    configured = bool(settings.crusoe_api_key)
-    enabled = bool(settings.crusoe_enabled)
-    connected = bool(enabled and configured)
+    primary_configured = bool(settings.crusoe_enabled and settings.crusoe_api_key)
+    fallback_configured = bool(settings.openrouter_enabled and settings.openrouter_api_key)
+    enabled = bool(settings.crusoe_enabled or settings.openrouter_enabled)
+    configured = bool(primary_configured or fallback_configured)
+    connected = llm_is_configured()
+    if connected and primary_configured and fallback_configured:
+        status_label = "connected_with_openrouter_fallback"
+    elif connected:
+        status_label = "connected"
+    elif enabled:
+        status_label = "missing_api_key"
+    else:
+        status_label = "disabled_by_flag"
     return AiStatusResponse(
-        provider="crusoe",
+        provider=active_provider_label(),
         enabled=enabled,
         configured=configured,
         connected=connected,
-        status="connected" if connected else "missing_api_key" if enabled and not configured else "disabled_by_flag",
-        text_model=settings.crusoe_model,
-        multimodal_model=settings.crusoe_multimodal_model,
+        status=status_label,
+        text_model=active_text_model_label(),
+        multimodal_model=active_multimodal_model_label(),
     )
 
 

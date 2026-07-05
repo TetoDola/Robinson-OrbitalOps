@@ -37,6 +37,6 @@ class ChatContextSummary(BaseModel):
 
 class OperatorChatResponse(BaseModel):
     message: ChatTurn
-    source: Literal["crusoe", "deterministic"]
+    source: Literal["crusoe", "openrouter", "deterministic"]
     model: str | None = None
     context: ChatContextSummary

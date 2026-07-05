@@ -26,13 +26,12 @@ from app.agents.domain_agents import (
 )
 from app.agents.data_context import enrich_agent_world_state
 from app.agents.power_orbit_agent import build_power_orbit_finding
-from app.config import settings
 from app.constants import DEMO_BASELINE_WORLD_STATE, DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID, StreamName
 from app.db.models import ScenarioRun, TelemetryEvent
 from app.db.session import session_context
 from app.services.agent_status import emit_agent_status
 from app.services.event_bus import publish_stream_event
-from app.services.llm_client import analyze_thermal_ir_image
+from app.services.llm_client import active_multimodal_model_label, analyze_thermal_ir_image, llm_is_configured
 from app.services.world_state import read_world_state, write_world_state
 from app.schemas.simulator import SimulatorInjectRequest, SimulatorInjectResponse
 
@@ -215,9 +214,9 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
             phase="model",
             severity="ORANGE",
             message=(
-                f"Sending thermal frame, fan audio, and telemetry to {settings.crusoe_multimodal_model}."
+                f"Sending thermal frame, fan audio, and telemetry to {active_multimodal_model_label()}."
                 if request.audio_data_url
-                else f"Sending thermal frame and telemetry to {settings.crusoe_multimodal_model}."
+                else f"Sending thermal frame and telemetry to {active_multimodal_model_label()}."
             ),
         )
         await session.commit()
@@ -530,8 +529,8 @@ def _thermal_image_finding(
 def _analysis_status(model_result: dict[str, Any] | None) -> str:
     if model_result:
         return "completed"
-    if not settings.crusoe_enabled or not settings.crusoe_api_key:
-        return "blocked_missing_crusoe_config"
+    if not llm_is_configured():
+        return "blocked_missing_llm_config"
     return "failed"
 
 
@@ -549,10 +548,10 @@ def _audio_evidence(latest_input: dict[str, Any]) -> list[str]:
 
 def _thermal_status_message(analysis_status: str, model_result: dict[str, Any] | None) -> str:
     if model_result:
-        model = str(model_result.get("model") or settings.crusoe_multimodal_model)
+        model = str(model_result.get("model") or active_multimodal_model_label())
         return f"{model} replied in {_latency_seconds(model_result.get('latency_ms'))}; sending hotspot report to Commander."
-    if analysis_status == "blocked_missing_crusoe_config":
-        return "Thermal frame stored; Nemotron analysis is waiting for Crusoe credentials."
+    if analysis_status == "blocked_missing_llm_config":
+        return "Thermal frame stored; model analysis is waiting for Crusoe or OpenRouter credentials."
     return "Thermal frame stored; deterministic telemetry still indicates hotspot risk."
 
 

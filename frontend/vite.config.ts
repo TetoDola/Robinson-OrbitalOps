@@ -10,12 +10,17 @@ const wsTarget = process.env.VITE_PROXY_WS_TARGET ?? "ws://localhost:8000";
 // reject responses return declarative local_tool_calls and this dev-server
 // endpoint executes them on the host. The MSI WMI ACPI write needs elevation,
 // so the actual msi-fan-cli calls live in pre-registered elevated Scheduled
-// Tasks ("Robinson Cooler Boost On/Off"); schtasks /run triggers them from
-// this non-elevated process without a UAC prompt.
+// Tasks ("OrbitOps Cooler Boost On/Off"); schtasks /run triggers them from
+// this non-elevated process without a UAC prompt. On machines without those
+// tasks, fall back to a simulated success so the demo cooling trace still runs.
 const COOLER_BOOST_TASKS: Record<string, string> = {
-  on: "Robinson Cooler Boost On",
-  off: "Robinson Cooler Boost Off",
+  on: "OrbitOps Cooler Boost On",
+  off: "OrbitOps Cooler Boost Off",
 };
+
+function isMissingScheduledTask(errorText: string): boolean {
+  return /cannot find the file specified/i.test(errorText) || /the system cannot find/i.test(errorText);
+}
 
 function localCoolerBoostPlugin(): Plugin {
   return {
@@ -51,6 +56,19 @@ function localCoolerBoostPlugin(): Plugin {
             { windowsHide: true, timeout: 20000 },
             (error, stdout, stderr) => {
               if (error) {
+                const detail = [String(error.message ?? error), stderr, stdout].filter(Boolean).join("\n");
+                if (isMissingScheduledTask(detail)) {
+                  res.end(
+                    JSON.stringify({
+                      ok: true,
+                      action,
+                      simulated: true,
+                      stdout: `Cooler Boost ${action} simulated; scheduled task "${taskName}" is not installed on this machine.`,
+                      stderr: stderr?.trim(),
+                    }),
+                  );
+                  return;
+                }
                 res.statusCode = 500;
                 res.end(
                   JSON.stringify({

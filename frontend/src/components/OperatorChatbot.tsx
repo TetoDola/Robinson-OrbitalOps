@@ -153,7 +153,7 @@ export default function OperatorChatbot() {
                 <div className="operator-chat-bubble">
                   <p>{message.content}</p>
                   {message.role === "assistant" && message.source ? (
-                    <small>{message.source === "crusoe" ? message.model ?? "crusoe" : "deterministic"}</small>
+                    <small>{message.source === "deterministic" ? "deterministic" : message.model ?? message.source}</small>
                   ) : null}
                 </div>
                 {message.visual === "ir" ? (

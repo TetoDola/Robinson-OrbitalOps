@@ -59,9 +59,15 @@ def _world_state() -> SimpleNamespace:
     )
 
 
-def test_operator_chat_falls_back_to_backend_context_when_crusoe_disabled(monkeypatch) -> None:
+def _disable_llm(monkeypatch) -> None:
     monkeypatch.setattr(settings, "crusoe_enabled", False)
     monkeypatch.setattr(settings, "crusoe_api_key", None)
+    monkeypatch.setattr(settings, "openrouter_enabled", False)
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
+
+
+def test_operator_chat_falls_back_to_backend_context_when_crusoe_disabled(monkeypatch) -> None:
+    _disable_llm(monkeypatch)
 
     reply = asyncio.run(
         build_operator_chat_reply(
@@ -81,8 +87,7 @@ def test_operator_chat_falls_back_to_backend_context_when_crusoe_disabled(monkey
 
 
 def test_operator_chat_patch_reply_preserves_human_approval_boundary(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "crusoe_enabled", False)
-    monkeypatch.setattr(settings, "crusoe_api_key", None)
+    _disable_llm(monkeypatch)
     patch = SimpleNamespace(
         id="patch-042",
         severity="RED",
@@ -113,8 +118,7 @@ def test_operator_chat_patch_reply_preserves_human_approval_boundary(monkeypatch
 
 
 def test_operator_chat_answers_current_altitude_from_world_state(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "crusoe_enabled", False)
-    monkeypatch.setattr(settings, "crusoe_api_key", None)
+    _disable_llm(monkeypatch)
 
     reply = asyncio.run(
         build_operator_chat_reply(
@@ -133,8 +137,7 @@ def test_operator_chat_answers_current_altitude_from_world_state(monkeypatch) ->
 
 
 def test_operator_chat_answers_specific_node_and_rack_temperatures(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "crusoe_enabled", False)
-    monkeypatch.setattr(settings, "crusoe_api_key", None)
+    _disable_llm(monkeypatch)
 
     node_reply = asyncio.run(
         build_operator_chat_reply(
@@ -163,8 +166,7 @@ def test_operator_chat_answers_specific_node_and_rack_temperatures(monkeypatch) 
 
 
 def test_operator_chat_can_lookup_all_accessible_backend_data(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "crusoe_enabled", False)
-    monkeypatch.setattr(settings, "crusoe_api_key", None)
+    _disable_llm(monkeypatch)
     scenario = SimpleNamespace(
         id="demo-run",
         scenario_name="Thermal recovery drill",

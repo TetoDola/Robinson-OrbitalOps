@@ -1,9 +1,10 @@
-"""Optional Crusoe/Nemotron integrations for agent evidence interpretation."""
+"""Optional OpenAI-compatible LLM integrations for agent evidence interpretation."""
 
 from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -20,16 +21,61 @@ NEMOTRON_OMNI_MODEL = "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B"
 MAX_MISSION_SUMMARY_CHARS = 900
 MAX_OPERATOR_CHAT_CHARS = 1400
 MAX_AGENT_ANALYSIS_CHARS = 900
+RESPONSE_PROVIDER_KEY = "_robinson_provider"
+RESPONSE_MODEL_KEY = "_robinson_model"
+
+
+@dataclass(frozen=True)
+class ChatProvider:
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+    headers: dict[str, str]
+
+
+def llm_is_configured() -> bool:
+    return _crusoe_configured() or _openrouter_configured()
+
+
+def agent_analysis_is_enabled() -> bool:
+    return bool(settings.crusoe_agent_analysis_enabled and llm_is_configured())
+
+
+def active_text_model_label() -> str:
+    if _crusoe_configured():
+        return settings.crusoe_model
+    if _openrouter_configured():
+        return settings.openrouter_model
+    return settings.crusoe_model
+
+
+def active_multimodal_model_label() -> str:
+    if _crusoe_configured():
+        return settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL
+    if _openrouter_configured():
+        return settings.openrouter_multimodal_model or settings.openrouter_model
+    return settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL
+
+
+def active_provider_label() -> str:
+    if _crusoe_configured() and _openrouter_configured():
+        return "crusoe+openrouter"
+    if _crusoe_configured():
+        return "crusoe"
+    if _openrouter_configured():
+        return "openrouter"
+    return "none"
 
 
 async def polish_mission_patch_summary(summary: str, context: dict) -> str:
-    """Return deterministic text unless Crusoe is explicitly enabled.
+    """Return deterministic text unless an external LLM provider is configured.
 
     The hackathon backend must boot without external credentials. The Commander
     still owns deterministic actions and safety; this hook is only for future
-    wording polish when `CRUSOE_ENABLED=true` and credentials are present.
+    wording polish when Crusoe or OpenRouter credentials are present.
     """
-    if not settings.crusoe_enabled or not settings.crusoe_api_key:
+    if not llm_is_configured():
         return summary
     response = await _crusoe_chat_completion(
         model=settings.crusoe_model,
@@ -50,11 +96,11 @@ async def answer_operator_chat(
 ) -> str:
     """Answer operator chat from current backend mission context.
 
-    Returns an empty string when Crusoe is not configured so callers can use a
+    Returns an empty string when no LLM provider is configured so callers can use a
     deterministic fallback. The model is advisory only; it cannot approve or
     execute mission patches.
     """
-    if not settings.crusoe_enabled or not settings.crusoe_api_key:
+    if not llm_is_configured():
         return ""
 
     prompt = build_operator_chat_prompt(message=message, context=context)
@@ -249,13 +295,13 @@ async def analyze_agent_finding(
     state: dict[str, Any],
     finding: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Ask Crusoe for advisory analysis of a triggered agent finding.
+    """Ask an external model for advisory analysis of a triggered agent finding.
 
     The model can refine the explanation and propose allowed follow-up actions,
     but deterministic code still detects the condition, builds executable
     commands, validates safety, and requires human approval before execution.
     """
-    if not settings.crusoe_enabled or not settings.crusoe_api_key or not settings.crusoe_agent_analysis_enabled:
+    if not agent_analysis_is_enabled():
         return None
 
     allowed_actions = sorted(AGENT_ACTION_ALLOWLISTS.get(agent_name, set(finding.get("recommended_actions") or [])))
@@ -286,7 +332,12 @@ async def analyze_agent_finding(
     parsed = _parse_json_object(_message_content(response, include_reasoning=True))
     if not parsed:
         return None
-    analysis = _normalize_agent_analysis(parsed, allowed_actions)
+    analysis = _normalize_agent_analysis(
+        parsed,
+        allowed_actions,
+        model=_response_model(response) or settings.crusoe_model,
+        provider=_response_provider(response) or "crusoe",
+    )
     analysis["latency_ms"] = latency_ms
     return analysis
 
@@ -345,6 +396,7 @@ async def analyze_thermal_ir_image(
     started_at = time.perf_counter()
     response = await _crusoe_chat_completion(
         model=settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL,
+        model_kind="multimodal",
         messages=[
             {
                 "role": "system",
@@ -365,6 +417,7 @@ async def analyze_thermal_ir_image(
         prompt["content"] = [content_parts[0], content_parts[-1]]
         response = await _crusoe_chat_completion(
             model=settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL,
+            model_kind="multimodal",
             messages=[
                 {
                     "role": "system",
@@ -384,7 +437,11 @@ async def analyze_thermal_ir_image(
     parsed = _parse_json_object(_message_content(response, include_reasoning=True))
     if not parsed:
         return None
-    analysis = _normalize_thermal_analysis(parsed)
+    analysis = _normalize_thermal_analysis(
+        parsed,
+        model=_response_model(response) or settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL,
+        provider=_response_provider(response) or "crusoe",
+    )
     analysis["latency_ms"] = latency_ms
     analysis["audio_included"] = bool(audio_part and response is not None)
     return analysis
@@ -393,17 +450,52 @@ async def analyze_thermal_ir_image(
 async def _crusoe_chat_completion(
     *,
     model: str,
+    model_kind: str = "text",
     messages: list[dict[str, Any]],
     max_tokens: int,
     temperature: float,
     response_format: dict[str, Any] | None = None,
     extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    if not settings.crusoe_enabled or not settings.crusoe_api_key:
+    providers = _chat_providers(model=model, model_kind=model_kind)
+    if not providers:
         return None
 
+    for provider in providers:
+        payload = _chat_payload(
+            provider=provider,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            response_format=response_format,
+            extra_body=extra_body,
+        )
+        url = f"{provider.base_url.rstrip('/')}/chat/completions"
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(url, headers=provider.headers, json=payload)
+                response.raise_for_status()
+                body = response.json()
+                if isinstance(body, dict):
+                    body[RESPONSE_PROVIDER_KEY] = provider.name
+                    body[RESPONSE_MODEL_KEY] = provider.model
+                    return body
+        except (httpx.HTTPError, ValueError):
+            continue
+    return None
+
+
+def _chat_payload(
+    *,
+    provider: ChatProvider,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    temperature: float,
+    response_format: dict[str, Any] | None,
+    extra_body: dict[str, Any] | None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "model": model,
+        "model": provider.model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
@@ -411,17 +503,69 @@ async def _crusoe_chat_completion(
     if response_format is not None:
         payload["response_format"] = response_format
     if extra_body:
-        payload.update(extra_body)
+        payload.update(_provider_extra_body(provider, extra_body))
+    return payload
 
-    url = f"{settings.crusoe_base_url.rstrip('/')}/chat/completions"
-    headers = {"Authorization": f"Bearer {settings.crusoe_api_key}", "Content-Type": "application/json"}
-    try:
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.json()
-    except (httpx.HTTPError, ValueError):
-        return None
+
+def _provider_extra_body(provider: ChatProvider, extra_body: dict[str, Any]) -> dict[str, Any]:
+    if provider.name == "crusoe":
+        return dict(extra_body)
+    # Crusoe accepts template knobs that OpenRouter's normalized API does not
+    # need; strip them when retrying through the fallback.
+    return {key: value for key, value in extra_body.items() if key != "chat_template_kwargs"}
+
+
+def _chat_providers(*, model: str, model_kind: str) -> list[ChatProvider]:
+    providers: list[ChatProvider] = []
+    if _crusoe_configured():
+        providers.append(
+            ChatProvider(
+                name="crusoe",
+                base_url=settings.crusoe_base_url,
+                api_key=settings.crusoe_api_key or "",
+                model=model,
+                headers={
+                    "Authorization": f"Bearer {settings.crusoe_api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+        )
+    if _openrouter_configured():
+        openrouter_model = (
+            settings.openrouter_multimodal_model or settings.openrouter_model
+            if model_kind == "multimodal"
+            else settings.openrouter_model
+        )
+        providers.append(
+            ChatProvider(
+                name="openrouter",
+                base_url=settings.openrouter_base_url,
+                api_key=settings.openrouter_api_key or "",
+                model=openrouter_model or model,
+                headers=_openrouter_headers(),
+            )
+        )
+    return providers
+
+
+def _openrouter_headers() -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {settings.openrouter_api_key}",
+        "Content-Type": "application/json",
+    }
+    if settings.openrouter_http_referer:
+        headers["HTTP-Referer"] = settings.openrouter_http_referer
+    if settings.openrouter_app_title:
+        headers["X-OpenRouter-Title"] = settings.openrouter_app_title
+    return headers
+
+
+def _crusoe_configured() -> bool:
+    return bool(settings.crusoe_enabled and settings.crusoe_api_key)
+
+
+def _openrouter_configured() -> bool:
+    return bool(settings.openrouter_enabled and settings.openrouter_api_key)
 
 
 def _input_audio_part(audio_data_url: str | None, mime_type: str | None) -> dict[str, Any] | None:
@@ -487,6 +631,16 @@ def _message_content(response: dict[str, Any] | None, *, include_reasoning: bool
         if isinstance(reasoning, str) and reasoning.strip():
             return reasoning
     return ""
+
+
+def _response_provider(response: dict[str, Any] | None) -> str | None:
+    value = (response or {}).get(RESPONSE_PROVIDER_KEY)
+    return value if isinstance(value, str) and value else None
+
+
+def _response_model(response: dict[str, Any] | None) -> str | None:
+    value = (response or {}).get(RESPONSE_MODEL_KEY)
+    return value if isinstance(value, str) and value else None
 
 
 def _bounded_text(value: str, max_chars: int) -> str:
@@ -687,7 +841,13 @@ def _agent_context(agent_name: str, state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def _normalize_agent_analysis(parsed: dict[str, Any], allowed_actions: list[str]) -> dict[str, Any]:
+def _normalize_agent_analysis(
+    parsed: dict[str, Any],
+    allowed_actions: list[str],
+    *,
+    model: str | None = None,
+    provider: str = "crusoe",
+) -> dict[str, Any]:
     allowed = set(allowed_actions)
     return {
         "summary": _bounded_text(_as_string(parsed.get("summary")), MAX_AGENT_ANALYSIS_CHARS),
@@ -697,12 +857,17 @@ def _normalize_agent_analysis(parsed: dict[str, Any], allowed_actions: list[str]
         "recommended_actions": [
             action for action in _as_string_list(parsed.get("recommended_actions")) if action in allowed
         ],
-        "model": settings.crusoe_model,
-        "provider": "crusoe",
+        "model": model or settings.crusoe_model,
+        "provider": provider,
     }
 
 
-def _normalize_thermal_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
+def _normalize_thermal_analysis(
+    parsed: dict[str, Any],
+    *,
+    model: str | None = None,
+    provider: str = "crusoe",
+) -> dict[str, Any]:
     allowed_actions = AGENT_ACTION_ALLOWLISTS["thermal_physical_agent"]
     audit_verdict = _audit_verdict(parsed)
     fail_only_questions = _as_string_list(parsed.get("questions")) if audit_verdict == "fail" else []
@@ -719,8 +884,8 @@ def _normalize_thermal_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
         ],
         "questions": fail_only_questions,
         "needs_human_review": audit_verdict == "fail",
-        "model": settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL,
-        "provider": "crusoe",
+        "model": model or settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL,
+        "provider": provider,
     }
 
 

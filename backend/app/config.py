@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     crusoe_enabled: bool = False
     crusoe_agent_analysis_enabled: bool = False
 
+    # OpenRouter is an OpenAI-compatible fallback when Crusoe is unavailable.
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "openrouter/auto"
+    openrouter_multimodal_model: str = "openrouter/auto"
+    openrouter_enabled: bool = True
+    openrouter_http_referer: str | None = None
+    openrouter_app_title: str = "Robinson OrbitOps"
+
     world_state_seed_version: int = 1
     websocket_heartbeat_seconds: float = 5.0
     local_gpu_telemetry_enabled: bool = False

@@ -299,7 +299,7 @@ export interface ChatContextSummary {
 
 export interface OperatorChatResponse {
   message: ChatTurn;
-  source: "crusoe" | "deterministic";
+  source: "crusoe" | "openrouter" | "deterministic";
   model: string | null;
   context: ChatContextSummary;
 }
