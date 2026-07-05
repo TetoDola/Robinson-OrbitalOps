@@ -6,7 +6,7 @@ from app.db.models import AgentStatus, AgentStatusEvent
 
 
 def test_crusoe_model_is_exactly_expected_case() -> None:
-    assert settings.crusoe_model == "deepseek-ai/DeepSeek-V4-Flash"
+    assert settings.crusoe_model == "moonshotai/Kimi-K2.6"
 
 
 def test_command_enum_contains_allowed_actions() -> None:

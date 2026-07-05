@@ -21,7 +21,7 @@ async def _upsert_scenario_run(session: AsyncSession) -> None:
             ScenarioRun(
                 id=DEMO_SCENARIO_RUN_ID,
                 scenario_name=DEMO_SCENARIO_NAME,
-                status="running",
+                status="paused",
                 metadata_={"source": "seed", "next_tick": 0},
             )
         )

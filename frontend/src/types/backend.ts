@@ -24,6 +24,31 @@ export interface ThermalState {
   highest_temp_c: number;
   hotspot_node: string;
   cooling_status: string;
+  latest_visual_input?: ThermalVisualInput | null;
+}
+
+export interface ThermalVisualInput {
+  id: string;
+  asset_id: string;
+  source: string;
+  notes?: string | null;
+  received_at: string;
+  image_data_url: string;
+  analysis_status: string;
+  model_result?: ThermalModelResult | null;
+}
+
+export interface ThermalModelResult {
+  summary?: string;
+  confidence?: number | null;
+  affected_assets?: string[];
+  evidence?: string[];
+  risk?: string;
+  recommended_actions?: string[];
+  questions?: string[];
+  needs_human_review?: boolean;
+  model?: string;
+  provider?: string;
 }
 
 export interface RadiationState {
@@ -100,6 +125,23 @@ export interface AgentsStatusResponse {
   agents: AgentStatusItem[];
 }
 
+export interface AgentRuntimeItem {
+  agent: string;
+  display_name: string;
+  trigger_mode: string;
+  interval_seconds: number;
+  run_state: string;
+  last_run_at: string;
+  next_run_at: string;
+  seconds_until_next_run: number;
+  missed_runs: number;
+  last_result: string;
+}
+
+export interface AgentsRuntimeResponse {
+  agents: AgentRuntimeItem[];
+}
+
 export interface AgentFinding {
   id: string;
   agent_name: string;
@@ -147,7 +189,7 @@ export interface MissionPatch {
   severity: Severity;
   status: string;
   summary: string;
-  evidence: Record<string, unknown>;
+  evidence: Record<string, unknown> | Record<string, unknown>[];
   actions: MissionPatchAction[];
   rollback_plan: Record<string, unknown>;
   approval_required: boolean;
@@ -169,6 +211,24 @@ export interface Command {
 
 export interface CommandsResponse {
   commands: Command[];
+}
+
+export interface SimulatorInjectRequest {
+  image_data_url?: string | null;
+  asset_id?: string;
+  source?: string;
+  notes?: string | null;
+}
+
+export interface SimulatorInjectResponse {
+  issue: string;
+  status: string;
+  world_state_version: number;
+  finding_ids: string[];
+  image_id?: string | null;
+  mission_patch_id?: string | null;
+  analysis_status?: string | null;
+  model_result?: ThermalModelResult | null;
 }
 
 export interface LiveEventBase<TType extends string, TPayload> {
@@ -196,6 +256,21 @@ export type AgentStatusUpdatedEvent = LiveEventBase<
 export type AgentFindingCreatedEvent = LiveEventBase<
   "agent.finding.created",
   Omit<AgentFinding, "created_at"> & { agent_name: string }
+>;
+
+export type MissionPatchCreatedEvent = LiveEventBase<
+  "mission_patch.created",
+  {
+    id: string;
+    status: string;
+    severity: Severity;
+    summary: string;
+    actions: MissionPatchAction[];
+    approval_required: boolean;
+    incident_id?: string | null;
+    evidence?: Record<string, unknown> | Record<string, unknown>[];
+    rollback_plan?: Record<string, unknown>;
+  }
 >;
 
 export type MissionPatchApprovedEvent = LiveEventBase<
@@ -273,6 +348,7 @@ export type BackendLiveEvent =
   | WorldStateUpdatedEvent
   | AgentStatusUpdatedEvent
   | AgentFindingCreatedEvent
+  | MissionPatchCreatedEvent
   | MissionPatchApprovedEvent
   | MissionPatchExecutingEvent
   | MissionPatchRejectedEvent

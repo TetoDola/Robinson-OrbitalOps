@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -11,9 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AgentFinding, AgentStatus
 from app.db.session import get_session
-from app.schemas.agent import AgentFindingItem, AgentFindingsResponse, AgentsStatusResponse, AgentStatusItem
+from app.schemas.agent import (
+    AgentFindingItem,
+    AgentFindingsResponse,
+    AgentRuntimeItem,
+    AgentsRuntimeResponse,
+    AgentsStatusResponse,
+    AgentStatusItem,
+    ThermalImageInputRequest,
+    ThermalImageInputResponse,
+)
+from app.schemas.simulator import SimulatorInjectRequest
+from app.services.manual_simulation import inject_thermal_frame
 
 router = APIRouter()
+AGENT_INTERVAL_SECONDS = 120
+ACTIVE_AGENT_STATUSES = {"detecting", "analyzing", "explaining", "investigating", "planning", "proposing"}
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -44,6 +57,16 @@ async def list_agent_statuses(
             for row in agent_rows
         ]
     )
+
+
+@router.get("/agents/runtime", response_model=AgentsRuntimeResponse, tags=["agents"])
+async def list_agent_runtime(
+    session: AsyncSession = Depends(get_session),
+) -> AgentsRuntimeResponse:
+    result = await session.execute(select(AgentStatus).order_by(AgentStatus.agent.asc()))
+    agent_rows = result.scalars().all()
+    now = datetime.now(timezone.utc)
+    return AgentsRuntimeResponse(agents=[_runtime_item(row, now) for row in agent_rows])
 
 
 @router.get("/agents/findings", response_model=AgentFindingsResponse, tags=["agents"])
@@ -77,4 +100,56 @@ async def list_agent_findings(
             )
             for row in finding_rows
         ]
+    )
+
+
+@router.post("/agents/thermal/input-image", response_model=ThermalImageInputResponse, tags=["agents"])
+async def submit_thermal_image(request: ThermalImageInputRequest) -> ThermalImageInputResponse:
+    response = await inject_thermal_frame(
+        SimulatorInjectRequest(
+            image_data_url=request.image_data_url,
+            asset_id=request.asset_id,
+            source=request.source,
+            notes=request.notes,
+        )
+    )
+    return ThermalImageInputResponse(
+        image_id=response.image_id or "pending",
+        asset_id=request.asset_id,
+        analysis_status=response.analysis_status or "unknown",
+        model_result=response.model_result,
+        finding_id=response.finding_ids[0] if response.finding_ids else None,
+        mission_patch_id=response.mission_patch_id,
+        world_state_version=response.world_state_version,
+    )
+
+
+def _runtime_item(row: AgentStatus, now: datetime) -> AgentRuntimeItem:
+    last_run_at = _as_utc(row.updated_at)
+    next_run_at = last_run_at + timedelta(seconds=AGENT_INTERVAL_SECONDS)
+    seconds_until = max(0, int((next_run_at - now).total_seconds()))
+    age_seconds = max(0, int((now - last_run_at).total_seconds()))
+    missed_runs = max(0, (age_seconds // AGENT_INTERVAL_SECONDS) - 1)
+    if row.status in ACTIVE_AGENT_STATUSES:
+        run_state = "running"
+    elif missed_runs >= 2:
+        run_state = "stale"
+    elif missed_runs == 1:
+        run_state = "missed"
+    elif seconds_until == 0:
+        run_state = "due"
+    else:
+        run_state = "scheduled"
+
+    return AgentRuntimeItem(
+        agent=row.agent,
+        display_name=row.display_name,
+        trigger_mode="interval",
+        interval_seconds=AGENT_INTERVAL_SECONDS,
+        run_state=run_state,
+        last_run_at=last_run_at,
+        next_run_at=next_run_at,
+        seconds_until_next_run=seconds_until,
+        missed_runs=missed_runs,
+        last_result=row.message,
     )

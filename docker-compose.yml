@@ -41,7 +41,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
-      CRUSOE_MODEL: deepseek-ai/DeepSeek-V4-Flash
+      CRUSOE_MODEL: ${CRUSOE_MODEL:-moonshotai/Kimi-K2.6}
+      CRUSOE_MULTIMODAL_MODEL: ${CRUSOE_MULTIMODAL_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-false}
     depends_on:
       postgres:
@@ -86,7 +87,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       CRUSOE_API_KEY: ${CRUSOE_API_KEY:-}
       CRUSOE_BASE_URL: https://api.inference.crusoecloud.com/v1/
-      CRUSOE_MODEL: deepseek-ai/DeepSeek-V4-Flash
+      CRUSOE_MODEL: ${CRUSOE_MODEL:-moonshotai/Kimi-K2.6}
+      CRUSOE_MULTIMODAL_MODEL: ${CRUSOE_MULTIMODAL_MODEL:-nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B}
       CRUSOE_ENABLED: ${CRUSOE_ENABLED:-false}
     depends_on:
       orbitops-api:

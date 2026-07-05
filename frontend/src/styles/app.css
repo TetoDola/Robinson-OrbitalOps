@@ -547,6 +547,15 @@ button:focus-visible,
   line-height: 1.35;
 }
 
+.agent-card small {
+  display: block;
+  margin-top: 6px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
 .severity {
   justify-self: end;
   color: var(--muted);
@@ -629,6 +638,41 @@ button:focus-visible,
   color: var(--text);
   font-size: 13px;
   line-height: 1.25;
+}
+
+.agent-signal-table {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.agent-signal-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 9px;
+  min-height: 34px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+
+.agent-signal-row span,
+.agent-signal-row small {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.agent-signal-row strong {
+  justify-self: end;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-signal-row small {
+  grid-column: 1 / -1;
+  text-transform: none;
 }
 
 .agent-detail-metrics,
@@ -781,6 +825,86 @@ button:focus-visible,
   color: var(--dim);
   font-family: var(--mono);
   font-size: 10px;
+}
+
+.thermal-frame-section img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: oklch(4% 0.012 146);
+}
+
+.thermal-frame-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.simulation-panel {
+  border-color: oklch(75% 0.075 200 / 0.24);
+  background:
+    linear-gradient(180deg, oklch(75% 0.075 200 / 0.055), transparent 58%),
+    var(--surface-soft);
+}
+
+.sim-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.sim-btn,
+.sim-upload {
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: oklch(91% 0.025 88 / 0.035);
+  font-size: 11px;
+  text-align: center;
+}
+
+.sim-btn.warn {
+  color: var(--yellow);
+}
+
+.sim-btn.danger {
+  color: var(--orange);
+}
+
+.sim-btn:disabled,
+.sim-upload:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.thermal-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.thermal-upload span,
+.sim-result {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.sim-result {
+  margin: 8px 0 0;
+  text-transform: uppercase;
 }
 
 .patch-panel {

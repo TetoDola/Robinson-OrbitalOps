@@ -105,17 +105,69 @@ async def run_simulator_tick(tick: int) -> dict:
     return event
 
 
-async def claim_next_simulator_tick() -> int:
+async def run_local_gpu_telemetry_tick() -> dict | None:
+    if not settings.local_gpu_telemetry_enabled:
+        return None
+    local_snapshot = await asyncio.to_thread(
+        read_nvidia_smi_snapshot,
+        node_id=settings.local_gpu_node_id,
+        asset_id=settings.local_gpu_asset_id,
+    )
+    if local_snapshot is None:
+        return None
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    async with session_context() as session:
+        world_state = await write_world_state(
+            session,
+            gpu_world_state_patch(local_snapshot),
+            updated_by="orbitops-local-gpu",
+            reason="local_gpu_telemetry",
+        )
+        local_event = build_local_gpu_event(local_snapshot, world_state_version=world_state.version)
+        session.add(
+            TelemetryEvent(
+                scenario_run_id=DEMO_SCENARIO_RUN_ID,
+                event_type="local_gpu.telemetry",
+                asset_id=local_snapshot["asset_id"],
+                severity="INFO",
+                payload=local_event["payload"],
+            )
+        )
+        await session.commit()
+
+    local_event["timestamp"] = timestamp
+    await publish_stream_event(StreamName.telemetry_events.value, local_event)
+    await publish_stream_event(
+        StreamName.ui_events.value,
+        {
+            "type": "world_state.updated",
+            "timestamp": timestamp,
+            "payload": {
+                "version": world_state.version,
+                "scenario_run_id": DEMO_SCENARIO_RUN_ID,
+                "state": world_state.state,
+            },
+        },
+    )
+    await publish_stream_event(StreamName.ui_events.value, local_event)
+    return local_event
+
+
+async def claim_next_simulator_tick() -> int | None:
     async with session_context() as session:
         scenario = await session.get(ScenarioRun, DEMO_SCENARIO_RUN_ID)
         if scenario is None:
             scenario = ScenarioRun(
                 id=DEMO_SCENARIO_RUN_ID,
                 scenario_name=DEMO_SCENARIO_NAME,
-                status="running",
+                status="paused",
                 metadata_={"next_tick": 0},
             )
             session.add(scenario)
+        if scenario.status == "paused":
+            await session.commit()
+            return None
         tick = claim_next_tick_from_scenario(scenario)
         await session.commit()
         return tick
@@ -134,7 +186,10 @@ async def run_forever() -> None:
     await wait_for_redis_ready()
     while True:
         tick = await claim_next_simulator_tick()
-        await run_simulator_tick(tick)
+        if tick is not None:
+            await run_simulator_tick(tick)
+        else:
+            await run_local_gpu_telemetry_tick()
         await asyncio.sleep(DEFAULT_TICK_SECONDS)
 
 

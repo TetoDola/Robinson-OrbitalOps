@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AgentStatusItem(BaseModel):
@@ -39,3 +39,37 @@ class AgentFindingItem(BaseModel):
 
 class AgentFindingsResponse(BaseModel):
     findings: list[AgentFindingItem]
+
+
+class AgentRuntimeItem(BaseModel):
+    agent: str
+    display_name: str
+    trigger_mode: str
+    interval_seconds: int
+    run_state: str
+    last_run_at: datetime
+    next_run_at: datetime
+    seconds_until_next_run: int
+    missed_runs: int
+    last_result: str
+
+
+class AgentsRuntimeResponse(BaseModel):
+    agents: list[AgentRuntimeItem]
+
+
+class ThermalImageInputRequest(BaseModel):
+    image_data_url: str = Field(..., min_length=16)
+    asset_id: str = "node-c"
+    source: str = "operator-upload"
+    notes: Optional[str] = None
+
+
+class ThermalImageInputResponse(BaseModel):
+    image_id: str
+    asset_id: str
+    analysis_status: str
+    model_result: dict[str, Any] | None = None
+    finding_id: str | None = None
+    mission_patch_id: str | None = None
+    world_state_version: int

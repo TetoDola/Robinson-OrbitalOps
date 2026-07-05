@@ -3,6 +3,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 
 import type {
   AgentFinding,
+  AgentRuntimeItem,
   AgentStatusItem,
   BackendLiveEvent,
   Command,
@@ -66,6 +67,7 @@ interface WorldStore {
   scenarioRunId: string | null;
   telemetry: TelemetrySnapshot;
   agents: AgentStatusItem[];
+  agentRuntime: AgentRuntimeItem[];
   agentFindings: AgentFinding[];
   incidents: Incident[];
   missionPatch: MissionPatch | null;
@@ -82,6 +84,8 @@ interface WorldStore {
   setTelemetry: (telemetry: TelemetrySnapshot) => void;
   setAgents: (agents: AgentStatusItem[]) => void;
   upsertAgent: (agent: AgentStatusItem) => void;
+  setAgentRuntime: (agents: AgentRuntimeItem[]) => void;
+  upsertAgentRuntime: (agent: AgentRuntimeItem) => void;
   setAgentFindings: (findings: AgentFinding[]) => void;
   upsertAgentFinding: (finding: AgentFinding) => void;
   setIncidents: (incidents: Incident[]) => void;
@@ -103,6 +107,7 @@ export const useWorldStore = create<WorldStore>()(
     scenarioRunId: null,
     telemetry: initialTelemetry,
     agents: [],
+    agentRuntime: [],
     agentFindings: [],
     incidents: [],
     missionPatch: null,
@@ -123,6 +128,13 @@ export const useWorldStore = create<WorldStore>()(
       set((state) => {
         const agents = state.agents.filter((item) => item.agent !== agent.agent);
         return { agents: [...agents, agent].sort((a, b) => a.agent.localeCompare(b.agent)) };
+      }),
+    setAgentRuntime: (agentRuntime) =>
+      set({ agentRuntime: [...agentRuntime].sort((a, b) => a.agent.localeCompare(b.agent)) }),
+    upsertAgentRuntime: (agent) =>
+      set((state) => {
+        const agentRuntime = state.agentRuntime.filter((item) => item.agent !== agent.agent);
+        return { agentRuntime: [...agentRuntime, agent].sort((a, b) => a.agent.localeCompare(b.agent)) };
       }),
     setAgentFindings: (agentFindings) =>
       set({
@@ -203,6 +215,37 @@ export const useWorldStore = create<WorldStore>()(
             ),
             lastEvent: event,
             lastEventAt: event.timestamp,
+          };
+        }
+
+        if (event.type === "mission_patch.created") {
+          const payload = event.payload as {
+            id: string;
+            status: string;
+            severity: string;
+            summary: string;
+            actions: MissionPatch["actions"];
+            approval_required: boolean;
+            incident_id?: string | null;
+            evidence?: Record<string, unknown> | Record<string, unknown>[];
+            rollback_plan?: Record<string, unknown>;
+          };
+          return {
+            missionPatch: {
+              id: payload.id,
+              incident_id: payload.incident_id ?? "",
+              severity: payload.severity,
+              status: payload.status,
+              summary: payload.summary,
+              evidence: payload.evidence ?? [],
+              actions: payload.actions ?? [],
+              rollback_plan: payload.rollback_plan ?? {},
+              approval_required: payload.approval_required,
+            },
+            patchMode: "pending",
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+            demoResetAt: null,
           };
         }
 

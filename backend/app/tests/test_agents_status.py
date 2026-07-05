@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from app.routers.agents import list_agent_findings, list_agent_statuses
-from app.schemas.agent import AgentFindingsResponse, AgentsStatusResponse
+from app.routers.agents import list_agent_findings, list_agent_runtime, list_agent_statuses
+from app.schemas.agent import AgentFindingsResponse, AgentsRuntimeResponse, AgentsStatusResponse
 from app.constants import AGENT_SEED_STATUS
 
 
@@ -54,6 +54,14 @@ def test_agents_status_shape() -> None:
     names = {agent.agent for agent in response.agents}
     expected = {seed["agent"] for seed in AGENT_SEED_STATUS}
     assert names == expected
+
+
+def test_agents_runtime_shape() -> None:
+    response = asyncio.run(list_agent_runtime(_Session()))
+    assert isinstance(response, AgentsRuntimeResponse)
+    assert len(response.agents) == len(AGENT_SEED_STATUS)
+    assert all(agent.interval_seconds == 120 for agent in response.agents)
+    assert {agent.trigger_mode for agent in response.agents} == {"interval"}
 
 
 class _FindingSession:

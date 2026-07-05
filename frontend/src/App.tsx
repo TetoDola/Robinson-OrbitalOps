@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import {
   getActiveMissionPatch,
   getAgentFindings,
+  getAgentsRuntime,
   getAgentsStatus,
   getCommands,
   getIncidents,
@@ -21,11 +22,12 @@ export default function App() {
     void Promise.allSettled([
       getWorldState(),
       getAgentsStatus(),
+      getAgentsRuntime(),
       getAgentFindings(),
       getCommands(),
       getIncidents(),
       getActiveMissionPatch(),
-    ]).then(([worldResult, agentsResult, findingsResult, commandsResult, incidentsResult, patchResult]) => {
+    ]).then(([worldResult, agentsResult, runtimeResult, findingsResult, commandsResult, incidentsResult, patchResult]) => {
       if (worldResult.status === "fulfilled") {
         store.setWorldState(
           worldResult.value.state,
@@ -35,6 +37,9 @@ export default function App() {
       }
       if (agentsResult.status === "fulfilled") {
         store.setAgents(agentsResult.value.agents);
+      }
+      if (runtimeResult.status === "fulfilled") {
+        store.setAgentRuntime(runtimeResult.value.agents);
       }
       if (findingsResult.status === "fulfilled") {
         store.setAgentFindings(findingsResult.value.findings);

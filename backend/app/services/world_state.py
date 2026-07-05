@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -34,6 +35,7 @@ async def write_world_state(
     updated_by: str,
     reason: str,
 ) -> WorldStateCurrent:
+    now = datetime.now(timezone.utc)
     current = await read_world_state(session)
     if current is None:
         current = WorldStateCurrent(
@@ -42,6 +44,7 @@ async def write_world_state(
             version=1,
             state=merge_state(CANONICAL_WORLD_STATE, state_patch),
             updated_by=updated_by,
+            updated_at=now,
         )
         session.add(current)
         await session.flush()
@@ -49,6 +52,7 @@ async def write_world_state(
         current.version += 1
         current.state = merge_state(current.state, state_patch)
         current.updated_by = updated_by
+        current.updated_at = now
 
     session.add(
         WorldStateSnapshot(

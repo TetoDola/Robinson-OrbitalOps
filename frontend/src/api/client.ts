@@ -1,10 +1,13 @@
 import type {
   ActiveMissionPatchResponse,
   AgentFindingsResponse,
+  AgentsRuntimeResponse,
   AgentsStatusResponse,
   CommandsResponse,
   IncidentsResponse,
   MissionPatch,
+  SimulatorInjectRequest,
+  SimulatorInjectResponse,
   WorldStateResponse,
 } from "../types/backend";
 
@@ -41,6 +44,10 @@ export function getAgentsStatus(): Promise<AgentsStatusResponse> {
   return fetchJson<AgentsStatusResponse>("/agents/status");
 }
 
+export function getAgentsRuntime(): Promise<AgentsRuntimeResponse> {
+  return fetchJson<AgentsRuntimeResponse>("/agents/runtime");
+}
+
 export function getAgentFindings(): Promise<AgentFindingsResponse> {
   return fetchJson<AgentFindingsResponse>("/agents/findings");
 }
@@ -67,4 +74,11 @@ export async function approveMissionPatch(patchId: string): Promise<MissionPatch
   });
 
   return response.mission_patch;
+}
+
+export function injectSimulatorIssue(issue: string, payload: SimulatorInjectRequest = {}): Promise<SimulatorInjectResponse> {
+  return fetchJson<SimulatorInjectResponse>(`/simulator/inject/${issue}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

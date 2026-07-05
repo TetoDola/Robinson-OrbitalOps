@@ -10,6 +10,7 @@ import { useWorldStore, type PatchMode } from "../store/worldStore";
 import type { Incident, MissionPatchAction, NodeState } from "../types/backend";
 import AgentStatus from "./AgentStatus";
 import IRCamPopup, { type IrNodeTarget } from "./IRCamPopup";
+import SimulationControls from "./SimulationControls";
 
 const rackPatterns = [
   ["active", "compute", "compute", "active", "compute", "hot", "active", "compute"],
@@ -249,6 +250,8 @@ export default function MissionPatchPanel() {
       </section>
 
       <AgentStatus />
+
+      <SimulationControls />
 
       <section className="patch-panel" aria-label="Mission patch approval">
         <div className="section-header compact">

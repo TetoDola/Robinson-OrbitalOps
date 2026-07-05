@@ -101,7 +101,7 @@ def test_reset_response_is_frontend_friendly_baseline() -> None:
 
     assert payload["scenario"] == DEMO_SCENARIO_NAME
     assert payload["scenario_run_id"] == DEMO_SCENARIO_RUN_ID
-    assert payload["status"] == "running"
+    assert payload["status"] == "paused"
     assert payload["world_state"]["state"]["tick"] == 0
     assert payload["world_state"]["state"]["active_mission_patch"] is None
     assert len(payload["agents"]) == len(AGENT_SEED_STATUS)
@@ -132,7 +132,7 @@ def test_reset_demo_database_clears_stale_rows_and_restores_baseline() -> None:
     assert world_state.state["active_mission_patch"] is None
 
     scenario = session.rows[ScenarioRun][0]
-    assert scenario.status == "running"
+    assert scenario.status == "paused"
     assert scenario.ended_at is None
     assert scenario.metadata_["next_tick"] == 0
     assert all(row.status in {"monitoring", "healthy"} for row in session.rows[AgentStatus])
@@ -192,6 +192,7 @@ def test_simulator_routes_expose_reset_pause_resume_and_all_agent_scenario() -> 
     assert "/simulator/reset" in routes
     assert "/simulator/pause" in routes
     assert "/simulator/resume" in routes
+    assert "/simulator/inject/{issue}" in routes
     assert "/simulator/scenario/{scenario_name}" in routes
     assert "run_remaining_agents_once" in simulator.run_scenario_once.__code__.co_names
 

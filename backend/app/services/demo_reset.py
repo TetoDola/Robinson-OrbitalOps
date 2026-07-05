@@ -52,11 +52,11 @@ async def reset_demo_database(session: AsyncSession) -> dict[str, Any]:
         scenario = ScenarioRun(
             id=DEMO_SCENARIO_RUN_ID,
             scenario_name=DEMO_SCENARIO_NAME,
-            status="running",
+            status="paused",
             metadata_={},
         )
         session.add(scenario)
-    scenario.status = "running"
+    scenario.status = "paused"
     scenario.metadata_ = {"source": "reset", "reset_at": now.isoformat(), "next_tick": 0}
     scenario.started_at = now
     scenario.ended_at = None
@@ -124,7 +124,7 @@ def reset_response_payload(*, state: dict[str, Any], agents: list[dict[str, Any]
     return {
         "scenario": DEMO_SCENARIO_NAME,
         "scenario_run_id": DEMO_SCENARIO_RUN_ID,
-        "status": "running",
+        "status": "paused",
         "reset_at": reset_at.isoformat(),
         "world_state": {
             "version": settings.world_state_seed_version,

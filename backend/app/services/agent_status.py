@@ -13,7 +13,12 @@ from app.services.event_bus import publish_stream_event
 
 
 AGENT_DISPLAY_NAMES = {
+    "workload_agent": "Workload Agent",
+    "thermal_physical_agent": "Thermal / Physical Agent",
     "power_orbit_agent": "Power / Orbit Agent",
+    "radiation_integrity_agent": "Radiation / Integrity Agent",
+    "checkpoint_downlink_agent": "Checkpoint / Downlink Agent",
+    "vibration_health_agent": "Vibration Health Agent",
     "commander_agent": "Commander Agent",
 }
 
