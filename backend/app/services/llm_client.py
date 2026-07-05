@@ -99,6 +99,7 @@ def build_operator_chat_prompt(*, message: str, context: dict[str, Any]) -> str:
     priority_lines = [
         ("scenario_name", variables.get("scenario_name")),
         ("world_version", variables.get("world_version")),
+        ("satellite_alt_km", variables.get("satellite_alt_km")),
         ("orbit_phase", variables.get("orbit_phase")),
         ("time_to_eclipse_min", variables.get("time_to_eclipse_min")),
         ("battery_percent", variables.get("battery_percent")),
@@ -141,8 +142,14 @@ def build_operator_chat_variables(context: dict[str, Any]) -> dict[str, Any]:
     training = _mapping(world.get("training"))
     nodes = _sequence(world.get("nodes"))
     agents = _sequence(context.get("agents"))
+    agent_events = _sequence(context.get("agent_events"))
     findings = _sequence(context.get("findings"))
+    incidents = _sequence(context.get("incidents"))
+    mission_patches = _sequence(context.get("mission_patches"))
+    approvals = _sequence(context.get("approvals"))
     commands = _sequence(context.get("commands"))
+    telemetry_events = _sequence(context.get("telemetry_events"))
+    world_snapshots = _sequence(context.get("world_snapshots"))
     patch = _mapping(context.get("mission_patch"))
     patch_actions = _sequence(patch.get("actions")) if patch else []
 
@@ -185,6 +192,7 @@ def build_operator_chat_variables(context: dict[str, Any]) -> dict[str, Any]:
         "radiation_recommended_action": computed_radiation.get("recommendedAction"),
         "radiation_explanation": computed_radiation.get("explanation"),
         "downlink_window_open": downlink.get("window_open"),
+        "downlink_pending_request": downlink.get("pending_request"),
         "downlink_capacity_gb": downlink.get("capacity_gb"),
         "downlink_used_gb": downlink.get("used_gb"),
         "downlink_time_remaining_min": downlink.get("time_remaining_min"),
@@ -199,11 +207,17 @@ def build_operator_chat_variables(context: dict[str, Any]) -> dict[str, Any]:
         "nodes": _compact_nodes(nodes),
         "agent_count": len(agents),
         "agents": _compact_agents(agents),
+        "agent_events_count": len(agent_events),
+        "recent_agent_events": agent_events[:12],
         "agents_needing_attention": _compact_agents(attention_agents),
         "highest_priority_agent": _compact_agent(attention_agents[0]) if attention_agents else _compact_agent(agents[0]) if agents else None,
         "open_findings_count": len(open_findings),
         "findings": _compact_findings(findings),
         "highest_priority_finding": _compact_finding(open_findings[0]) if open_findings else _compact_finding(findings[0]) if findings else None,
+        "incident_count": len(incidents),
+        "incidents": incidents,
+        "mission_patch_count": len(mission_patches),
+        "mission_patches": mission_patches,
         "active_patch_id": patch.get("id") if patch else None,
         "active_patch_status": patch.get("status") if patch else None,
         "active_patch_severity": patch.get("severity") if patch else None,
@@ -212,9 +226,16 @@ def build_operator_chat_variables(context: dict[str, Any]) -> dict[str, Any]:
         "active_patch_action_count": len(patch_actions),
         "active_patch_actions": [_compact_action(action) for action in patch_actions],
         "active_patch_rollback_plan": patch.get("rollback_plan") if patch else None,
+        "approval_count": len(approvals),
+        "approvals": approvals,
         "command_count": len(commands),
         "command_status_counts": _status_counts(commands),
         "commands": _compact_commands(commands),
+        "telemetry_event_count": len(telemetry_events),
+        "recent_telemetry_events": telemetry_events,
+        "world_snapshot_count": len(world_snapshots),
+        "world_snapshots": world_snapshots,
+        "all_accessible_data": context.get("all_accessible_data", {}),
         "approval_boundary": (
             "The AI can explain mission context and recommend operator review, but only the human operator "
             "can approve, reject, modify, or execute mission patch controls."
@@ -273,6 +294,10 @@ async def analyze_agent_finding(
 async def analyze_thermal_ir_image(
     image_data_url: str,
     *,
+    audio_data_url: str | None = None,
+    audio_mime_type: str | None = None,
+    audio_duration_s: float | None = None,
+    audio_notes: str | None = None,
     state: dict[str, Any],
     finding: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -286,28 +311,36 @@ async def analyze_thermal_ir_image(
     if not image_data_url.startswith("data:image/"):
         return None
 
+    audio_part = _input_audio_part(audio_data_url, audio_mime_type)
+    content_parts: list[dict[str, Any]] = [
+        {"type": "image_url", "image_url": {"url": image_data_url}},
+    ]
+    if audio_part is not None:
+        content_parts.append(audio_part)
+    content_parts.append(
+        {
+            "type": "text",
+            "text": (
+                "You are the thermal/physical inspection sub-agent for an orbital GPU data center. "
+                "Analyze the attached thermal IR image"
+                f"{' and attached fan audio clip' if audio_part else ''} against the current telemetry and finding. "
+                "Return only a JSON object with keys: audit_verdict, summary, confidence, affected_assets, "
+                "evidence, risk, recommended_actions, questions, needs_human_review. audit_verdict must be "
+                "pass, warn, or fail. Use fail only when the image, audio, or telemetry does not support the "
+                "deterministic finding, critical data is missing, or confidence is too low for operator use. "
+                "Only fail may include operator questions or additional recommended_actions; pass and warn "
+                "must use empty questions and recommended_actions arrays. Keep recommendations within this "
+                f"allowlist: {', '.join(sorted(AGENT_ACTION_ALLOWLISTS['thermal_physical_agent']))}. "
+                "Do not invent assets outside the telemetry.\n\n"
+                f"Audio metadata JSON: {json.dumps(_audio_metadata(audio_data_url, audio_mime_type, audio_duration_s, audio_notes), sort_keys=True)}\n"
+                f"Telemetry JSON: {json.dumps(_thermal_context(state), sort_keys=True)}\n"
+                f"Deterministic finding JSON: {json.dumps(finding, sort_keys=True)}"
+            ),
+        }
+    )
     prompt = {
         "role": "user",
-        "content": [
-            {"type": "image_url", "image_url": {"url": image_data_url}},
-            {
-                "type": "text",
-                "text": (
-                    "You are the thermal/physical inspection sub-agent for an orbital GPU data center. "
-                    "Analyze the attached thermal IR image against the current telemetry and finding. "
-                    "Return only a JSON object with keys: audit_verdict, summary, confidence, affected_assets, "
-                    "evidence, risk, recommended_actions, questions, needs_human_review. audit_verdict must be "
-                    "pass, warn, or fail. Use fail only when the image or telemetry does not support the "
-                    "deterministic finding, critical data is missing, or confidence is too low for operator use. "
-                    "Only fail may include operator questions or additional recommended_actions; pass and warn "
-                    "must use empty questions and recommended_actions arrays. Keep recommendations within this "
-                    f"allowlist: {', '.join(sorted(AGENT_ACTION_ALLOWLISTS['thermal_physical_agent']))}. "
-                    "Do not invent assets outside the telemetry.\n\n"
-                    f"Telemetry JSON: {json.dumps(_thermal_context(state), sort_keys=True)}\n"
-                    f"Deterministic finding JSON: {json.dumps(finding, sort_keys=True)}"
-                ),
-            },
-        ],
+        "content": content_parts,
     }
     started_at = time.perf_counter()
     response = await _crusoe_chat_completion(
@@ -327,12 +360,33 @@ async def analyze_thermal_ir_image(
         response_format={"type": "json_object"},
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
+    if response is None and audio_part is not None:
+        audio_part = None
+        prompt["content"] = [content_parts[0], content_parts[-1]]
+        response = await _crusoe_chat_completion(
+            model=settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You interpret multimodal evidence for a safety-critical agent. "
+                        "Never approve actions; only explain observed evidence and uncertainty."
+                    ),
+                },
+                prompt,
+            ],
+            max_tokens=1024,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
     latency_ms = int((time.perf_counter() - started_at) * 1000)
     parsed = _parse_json_object(_message_content(response, include_reasoning=True))
     if not parsed:
         return None
     analysis = _normalize_thermal_analysis(parsed)
     analysis["latency_ms"] = latency_ms
+    analysis["audio_included"] = bool(audio_part and response is not None)
     return analysis
 
 
@@ -368,6 +422,50 @@ async def _crusoe_chat_completion(
             return response.json()
     except (httpx.HTTPError, ValueError):
         return None
+
+
+def _input_audio_part(audio_data_url: str | None, mime_type: str | None) -> dict[str, Any] | None:
+    if not audio_data_url:
+        return None
+    parsed = _parse_audio_data_url(audio_data_url, mime_type)
+    if parsed is None:
+        return None
+    audio_format, data = parsed
+    return {
+        "type": "input_audio",
+        "input_audio": {
+            "data": data,
+            "format": audio_format,
+        },
+    }
+
+
+def _parse_audio_data_url(audio_data_url: str, mime_type: str | None) -> tuple[str, str] | None:
+    if not audio_data_url.startswith("data:") or "," not in audio_data_url:
+        return None
+    header, data = audio_data_url.split(",", 1)
+    if ";base64" not in header:
+        return None
+    content_type = (mime_type or header.removeprefix("data:").split(";", 1)[0]).lower()
+    if content_type in {"audio/mpeg", "audio/mp3"}:
+        return "mp3", data
+    if content_type in {"audio/wav", "audio/wave", "audio/x-wav"}:
+        return "wav", data
+    return None
+
+
+def _audio_metadata(
+    audio_data_url: str | None,
+    audio_mime_type: str | None,
+    audio_duration_s: float | None,
+    audio_notes: str | None,
+) -> dict[str, Any]:
+    return {
+        "provided": bool(audio_data_url),
+        "mime_type": audio_mime_type,
+        "duration_s": audio_duration_s,
+        "notes": audio_notes,
+    }
 
 
 def _message_content(response: dict[str, Any] | None, *, include_reasoning: bool = False) -> str:
@@ -434,6 +532,10 @@ def _compact_visual_input(value: dict[str, Any]) -> dict[str, Any] | None:
         "notes": value.get("notes"),
         "received_at": value.get("received_at"),
         "analysis_status": value.get("analysis_status"),
+        "audio_id": value.get("audio_id"),
+        "audio_mime_type": value.get("audio_mime_type"),
+        "audio_duration_s": value.get("audio_duration_s"),
+        "audio_notes": value.get("audio_notes"),
         "model_summary": model_result.get("summary"),
         "model_verdict": model_result.get("audit_verdict"),
         "model_confidence": model_result.get("confidence"),

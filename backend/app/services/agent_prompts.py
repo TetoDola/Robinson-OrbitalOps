@@ -183,22 +183,30 @@ AGENT_PROMPTS: dict[str, AgentPromptSpec] = {
         AgentPromptSpec(
             agent="checkpoint_downlink_agent",
             display_name="Checkpoint / Downlink Agent",
-            mission="Guarantee ground can recover the training run from what fits in the current contact window.",
+            mission=(
+                "Plan ground delivery of requested data products: chunk oversized transfers into safe "
+                "per-window sizes and schedule them across contact windows, one window per orbit."
+            ),
             watches=(
-                "downlink.capacity_gb (a full checkpoint needs 180 GB)",
+                "downlink.pending_request (bulk data requests from ground, e.g. multi-TB model exports)",
+                "downlink.capacity_gb per contact window (a full checkpoint needs 180 GB)",
                 "downlink.window_open and downlink.time_remaining_min",
                 "downlink.used_gb and training.latest_checkpoint",
             ),
             hypotheses=(
+                "The requested data exceeds one contact window and must be chunked across many orbits.",
                 "The full checkpoint cannot fit this window and transfer order must change.",
                 "Manifest, hashes, logs, and a delta checkpoint are sufficient for ground recovery.",
                 "The window will close before even priority artifacts finish transferring.",
             ),
             evidence_rules=(
+                "Quote the requested size against per-window capacity_gb, the safe chunk size after link margin, "
+                "the resulting chunk count, and the orbit count with total time estimate.",
                 "Quote capacity_gb against the 180 GB full-checkpoint size and the minutes remaining in the window.",
-                "State explicitly which artifacts fit and which must be deferred.",
+                "State explicitly which artifacts fit now and which must be chunked or deferred.",
             ),
             escalation=(
+                "A pending data request cannot complete within a single contact window.",
                 "Recovery-critical artifacts cannot reach ground within the current contact window.",
                 "Capacity drops below the full checkpoint size while the checkpoint is the only trusted copy.",
             ),

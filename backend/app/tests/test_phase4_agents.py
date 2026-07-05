@@ -14,6 +14,7 @@ from app.agents.domain_agents import (
     build_workload_finding,
     emit_phase4_heartbeats_once,
     heartbeat_status_payload,
+    plan_downlink_chunks,
 )
 from app.constants import CANONICAL_WORLD_STATE, DEMO_BASELINE_WORLD_STATE
 
@@ -49,6 +50,41 @@ def test_remaining_agents_emit_shared_finding_shape() -> None:
             "finding_signature",
             "scenario_time_bucket",
         }
+
+
+def test_downlink_bulk_request_produces_chunked_transfer_plan() -> None:
+    state = deepcopy(CANONICAL_WORLD_STATE)
+    state["downlink"]["pending_request"] = {
+        "id": "req-model-export-01",
+        "requested_by": "ground-ops",
+        "description": "full model weights export",
+        "size_gb": 5120,
+        "priority": "high",
+    }
+
+    plan = plan_downlink_chunks(state["downlink"])
+    assert plan is not None
+    assert plan["window_capacity_gb"] == 22
+    assert plan["chunk_gb"] == 18  # floor(22 * 0.85)
+    assert plan["chunk_count"] == 285  # ceil(5120 / 18)
+    assert plan["orbits_needed"] == 285
+    assert plan["estimated_days"] == 18.3
+
+    finding = build_checkpoint_downlink_finding(state)
+    assert finding is not None
+    assert finding["finding_signature"] == "downlink_chunked_transfer_plan"
+    assert "req-model-export-01" in finding["affected_assets"]
+    evidence_text = " ".join(finding["evidence"])
+    assert "5.0 TB" in evidence_text
+    assert "285 chunks" in evidence_text
+    assert "285 orbits" in evidence_text
+    assert "18.3 days" in evidence_text
+
+
+def test_downlink_without_request_keeps_checkpoint_fit_finding() -> None:
+    finding = build_checkpoint_downlink_finding(deepcopy(CANONICAL_WORLD_STATE))
+    assert finding is not None
+    assert finding["finding_signature"] == "downlink_checkpoint_fit"
 
 
 def test_phase4_has_five_remaining_agent_builders() -> None:

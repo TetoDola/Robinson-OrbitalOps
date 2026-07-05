@@ -16,6 +16,10 @@ def _world_state() -> SimpleNamespace:
             "scenario": "demo",
             "scenario_name": "Thermal recovery drill",
             "satellite": {
+                "lat": 47.3,
+                "lon": 8.5,
+                "alt_km": 550,
+                "velocity_km_s": 8.05,
                 "time_to_eclipse_min": 6.1,
                 "orbit_phase": "sunlight",
                 "ground_link": "Zurich-03",
@@ -108,6 +112,104 @@ def test_operator_chat_patch_reply_preserves_human_approval_boundary(monkeypatch
     assert reply.context_summary["active_patch_id"] == "patch-042"
 
 
+def test_operator_chat_answers_current_altitude_from_world_state(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "crusoe_enabled", False)
+    monkeypatch.setattr(settings, "crusoe_api_key", None)
+
+    reply = asyncio.run(
+        build_operator_chat_reply(
+            message="what is the current altitude?",
+            history=[],
+            world_state=_world_state(),
+            agents=[],
+            findings=[],
+            mission_patch=None,
+        )
+    )
+
+    assert reply.source == "deterministic"
+    assert "current altitude is 550 km" in reply.content
+    assert "velocity is 8.05 km/s" in reply.content
+
+
+def test_operator_chat_answers_specific_node_and_rack_temperatures(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "crusoe_enabled", False)
+    monkeypatch.setattr(settings, "crusoe_api_key", None)
+
+    node_reply = asyncio.run(
+        build_operator_chat_reply(
+            message="what is the temperature on node c?",
+            history=[],
+            world_state=_world_state(),
+            agents=[],
+            findings=[],
+            mission_patch=None,
+        )
+    )
+    rack_reply = asyncio.run(
+        build_operator_chat_reply(
+            message="temperature on c rack",
+            history=[],
+            world_state=_world_state(),
+            agents=[],
+            findings=[],
+            mission_patch=None,
+        )
+    )
+
+    assert "node-c temperature is 96.4 C" in node_reply.content
+    assert "status is unknown" in node_reply.content
+    assert "node-c temperature is 96.4 C" in rack_reply.content
+
+
+def test_operator_chat_can_lookup_all_accessible_backend_data(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "crusoe_enabled", False)
+    monkeypatch.setattr(settings, "crusoe_api_key", None)
+    scenario = SimpleNamespace(
+        id="demo-run",
+        scenario_name="Thermal recovery drill",
+        status="paused",
+        metadata_={"manual_injection": "thermal-frame"},
+        started_at="2026-07-05T08:00:00Z",
+        ended_at=None,
+    )
+    telemetry = SimpleNamespace(
+        id=7,
+        scenario_run_id="demo-run",
+        event_type="power.bus",
+        asset_id="orbital-dc-01",
+        severity="INFO",
+        payload={"bus_voltage": 48.2, "bus_current": 12.4},
+        created_at="2026-07-05T08:01:00Z",
+    )
+
+    scenario_reply = asyncio.run(
+        build_operator_chat_reply(
+            message="what is the scenario status?",
+            history=[],
+            world_state=_world_state(),
+            scenario_runs=[scenario],
+            agents=[],
+            findings=[],
+            mission_patch=None,
+        )
+    )
+    telemetry_reply = asyncio.run(
+        build_operator_chat_reply(
+            message="what is the bus voltage?",
+            history=[],
+            world_state=_world_state(),
+            telemetry_events=[telemetry],
+            agents=[],
+            findings=[],
+            mission_patch=None,
+        )
+    )
+
+    assert "scenario_runs[demo-run].status = paused" in scenario_reply.content
+    assert "telemetry_events[power.bus].payload.bus_voltage = 48.2" in telemetry_reply.content
+
+
 def test_operator_chat_sends_named_mission_variables_to_crusoe(monkeypatch) -> None:
     monkeypatch.setattr(settings, "crusoe_enabled", True)
     monkeypatch.setattr(settings, "crusoe_api_key", "test-key")
@@ -174,6 +276,37 @@ def test_operator_chat_sends_named_mission_variables_to_crusoe(monkeypatch) -> N
     assert '"thermal_hotspot_node": "node-c"' in prompt
     assert '"active_patch_action_count": 2' in prompt
     assert '"command_status_counts": {"queued": 1}' in prompt
+    assert '"all_accessible_data"' in prompt
     assert "OPERATOR_QUESTION=What should I inspect?" in prompt
     assert reply.context_summary["command_count"] == 1
     assert reply.context_summary["queued_commands"] == 1
+
+
+def test_operator_chat_does_not_short_circuit_direct_questions_when_crusoe_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "crusoe_enabled", True)
+    monkeypatch.setattr(settings, "crusoe_api_key", "test-key")
+    captured: dict = {}
+
+    async def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "The LLM saw node-c at 96.4 C."}}]}
+
+    monkeypatch.setattr(llm_client, "_crusoe_chat_completion", fake_completion)
+
+    reply = asyncio.run(
+        build_operator_chat_reply(
+            message="what is the temperature on node c?",
+            history=[],
+            world_state=_world_state(),
+            agents=[],
+            findings=[],
+            mission_patch=None,
+        )
+    )
+
+    prompt = captured["messages"][-1]["content"]
+    assert reply.source == "crusoe"
+    assert reply.content == "The LLM saw node-c at 96.4 C."
+    assert '"nodes": [{"id": "node-a"' in prompt
+    assert '"thermal_highest_temp_c": 96.4' in prompt
+    assert "OPERATOR_QUESTION=what is the temperature on node c?" in prompt

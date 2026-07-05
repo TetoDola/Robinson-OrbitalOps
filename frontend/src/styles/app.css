@@ -373,37 +373,6 @@ button:focus-visible,
   list-style: none;
 }
 
-.agent-system-flow {
-  display: grid;
-  gap: 6px;
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.agent-system-flow li {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  min-height: 28px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.agent-system-flow span {
-  color: var(--amber);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.agent-system-flow strong {
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 650;
-}
-
 .risk-row,
 .agent-card,
 .node-row,
@@ -1408,6 +1377,94 @@ button:focus-visible,
   background: oklch(4% 0.012 146);
 }
 
+.thermal-audio-player,
+.approval-audio audio,
+.thermal-frame-audio audio,
+.audio-evidence-card audio {
+  display: block;
+  width: 100%;
+  height: 32px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: oklch(4% 0.012 146 / 0.7);
+}
+
+.approval-audio,
+.thermal-frame-audio,
+.audio-evidence-card {
+  margin-top: 9px;
+}
+
+.audio-evidence-card {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid oklch(75% 0.075 200 / 0.34);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, oklch(75% 0.075 200 / 0.075), transparent 72%),
+    oklch(4% 0.012 146 / 0.36);
+}
+
+.audio-evidence-card.is-compact {
+  max-width: 220px;
+  padding: 7px;
+}
+
+.audio-evidence-head,
+.audio-evidence-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audio-evidence-head strong,
+.audio-evidence-meta span {
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.audio-evidence-meta span {
+  color: var(--dim);
+  font-weight: 500;
+}
+
+.audio-waveform {
+  display: block;
+  width: 100%;
+  height: 78px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 17px, oklch(82% 0.024 88 / 0.045) 17px 18px),
+    oklch(4% 0.012 146 / 0.58);
+}
+
+.audio-evidence-card.is-compact .audio-waveform {
+  height: 48px;
+}
+
+.audio-evidence-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.approval-audio small {
+  display: block;
+  margin-top: 6px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
 .thermal-frame-meta {
   display: flex;
   justify-content: space-between;
@@ -1521,6 +1578,127 @@ button:focus-visible,
 .sim-result {
   margin: 8px 0 0;
   text-transform: uppercase;
+}
+
+.cooling-trend {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid oklch(74% 0.12 157 / 0.35);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, oklch(74% 0.12 157 / 0.08), transparent 74%),
+    oklch(4% 0.012 146 / 0.34);
+}
+
+.cooling-trend-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 9px;
+  align-items: end;
+}
+
+.cooling-trend-head .label {
+  grid-column: 1 / -1;
+}
+
+.cooling-trend-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cooling-trend-head b {
+  color: var(--green);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cooling-chart-frame {
+  height: 72px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 17px, oklch(82% 0.024 88 / 0.07) 17px 18px),
+    linear-gradient(180deg, oklch(67% 0.14 54 / 0.12), oklch(74% 0.12 157 / 0.08));
+}
+
+.cooling-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+}
+
+.cooling-chart polyline {
+  fill: none;
+  stroke: var(--green);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 6px oklch(74% 0.12 157 / 0.44));
+  vector-effect: non-scaling-stroke;
+}
+
+.cooling-target {
+  stroke: oklch(91% 0.025 88 / 0.28);
+  stroke-dasharray: 4 5;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.cooling-trend-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.cooling-trend-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cooling-trend.is-activating {
+  border-color: oklch(67% 0.14 54 / 0.38);
+}
+
+.cooling-trend.is-activating .cooling-trend-head b {
+  color: var(--orange);
+}
+
+.cooling-trend.is-settled .cooling-trend-head b,
+.cooling-trend.is-off .cooling-trend-head b {
+  color: var(--cyan);
+}
+
+.cooling-trend.is-failed {
+  border-color: oklch(67% 0.15 29 / 0.5);
+}
+
+.cooling-trend.is-failed .cooling-trend-head b,
+.cooling-trend.is-failed .cooling-chart polyline {
+  color: var(--red);
+  stroke: var(--red);
+}
+
+.agent-cooling-trend {
+  grid-column: 1 / -1;
+  margin-top: 0;
 }
 
 .ai-status-row {

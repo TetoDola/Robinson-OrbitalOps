@@ -10,7 +10,8 @@ import {
   getWorldState,
   injectSimulatorIssue,
 } from "../api/client";
-import { useWorldStore } from "../store/worldStore";
+import { FAN_AUDIO_DURATION_SECONDS, renderFanAudioMp3DataUrl } from "../services/fanAudio";
+import { useWorldStore, type CoolingTrendSample } from "../store/worldStore";
 import { IRCameraCanvas, renderIrFrameDataUrl, type IrNodeTarget } from "./IRCamPopup";
 
 // The thermal-frame scenario drives node-c to 91 C on the backend; render the
@@ -22,7 +23,7 @@ const issueButtons = [
   { id: "thermal-frame", label: "Thermal frame", tone: "danger" },
   { id: "radiation-spike", label: "Radiation spike", tone: "danger" },
   { id: "eclipse-risk", label: "Eclipse risk", tone: "warn" },
-  { id: "downlink-constraint", label: "Downlink limit", tone: "warn" },
+  { id: "downlink-constraint", label: "5 TB data request", tone: "warn" },
   { id: "workload-stall", label: "Rank stall", tone: "warn" },
   { id: "vibration-fault", label: "Vibration fault", tone: "warn" },
 ];
@@ -44,6 +45,69 @@ function formatClock(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "";
   return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function coolingChartTrace(samples: CoolingTrendSample[], targetTempC: number): { points: string; targetY: number } {
+  const fallbackSample = { time: "", tempC: targetTempC, fanPct: 0 };
+  const chartSamples =
+    samples.length > 1
+      ? samples
+      : samples.length === 1
+        ? [samples[0], { ...samples[0], time: "" }]
+        : [fallbackSample, fallbackSample];
+  const temps = [...chartSamples.map((sample) => sample.tempC), targetTempC];
+  const minTemp = Math.min(...temps);
+  const maxTemp = Math.max(...temps);
+  const range = Math.max(1, maxTemp - minTemp);
+  const width = 100;
+  const height = 100;
+  const targetY = height - ((targetTempC - minTemp) / range) * height;
+
+  return {
+    points: chartSamples
+      .map((sample, index) => {
+        const x = (index / (chartSamples.length - 1)) * width;
+        const y = height - ((sample.tempC - minTemp) / range) * height;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      })
+      .join(" "),
+    targetY,
+  };
+}
+
+export function CoolingTrendPanel({ className = "" }: { className?: string }) {
+  const coolingTrend = useWorldStore((state) => state.coolingTrend);
+  const latestSample = coolingTrend.samples[coolingTrend.samples.length - 1] ?? null;
+  if (coolingTrend.status === "idle" && coolingTrend.samples.length === 0) {
+    return null;
+  }
+
+  const trace = coolingChartTrace(coolingTrend.samples, coolingTrend.targetTempC);
+  const currentTemp = latestSample?.tempC ?? coolingTrend.baselineTempC;
+  const dropC = Math.max(0, coolingTrend.baselineTempC - currentTemp);
+  const fanPct = latestSample?.fanPct ?? 100;
+  const classes = ["cooling-trend", `is-${coolingTrend.status}`, className].filter(Boolean).join(" ");
+
+  return (
+    <div className={classes} aria-live="polite">
+      <div className="cooling-trend-head">
+        <span className="label">local cooling</span>
+        <strong>{coolingTrend.message}</strong>
+        <b>{currentTemp ? `${currentTemp.toFixed(1)} C` : "--"}</b>
+      </div>
+      <div className="cooling-chart-frame">
+        <svg className="cooling-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Temperature trend">
+          <line className="cooling-target" x1="0" x2="100" y1={trace.targetY} y2={trace.targetY} />
+          <polyline points={trace.points} />
+        </svg>
+      </div>
+      <div className="cooling-trend-meta">
+        <span>{dropC > 0 ? `${dropC.toFixed(1)} C drop` : "trace starting"}</span>
+        <span>fan {fanPct}%</span>
+        <span>target {coolingTrend.targetTempC ? coolingTrend.targetTempC.toFixed(1) : "--"} C</span>
+      </div>
+    </div>
+  );
 }
 
 async function refreshBackendSnapshot() {
@@ -122,6 +186,15 @@ export default function SimulationControls() {
               tempC: Math.max(irNode.tempC, SIMULATED_INCIDENT_TEMP_C),
             })
           : null;
+      const fanAudio =
+        issue === "thermal-frame" || issue === "vibration-fault"
+          ? {
+              audio_data_url: renderFanAudioMp3DataUrl({ severity: 1 }),
+              audio_mime_type: "audio/mpeg",
+              audio_duration_s: FAN_AUDIO_DURATION_SECONDS,
+              audio_notes: "Synthetic MP3: high-RPM fan surge with bearing whine and intermittent warning chirps.",
+            }
+          : {};
       const payload =
         issue === "thermal-frame" && selectedFile
           ? {
@@ -129,17 +202,20 @@ export default function SimulationControls() {
               asset_id: "node-c",
               source: "operator-upload",
               notes: selectedFile.name,
+              ...fanAudio,
             }
           : issue === "thermal-frame" && simulatedIrFrame
             ? {
                 image_data_url: simulatedIrFrame,
                 asset_id: "node-c",
                 source: "ir-cam-sim",
-                notes: "Simulated IR capture: thermal overlay on B200 board",
+                notes: "Simulated IR capture: thermal overlay on B200 board plus fan audio.",
+                ...fanAudio,
               }
             : {
                 asset_id: issue === "vibration-fault" || issue === "thermal-frame" ? "node-c" : "orbital-dc-01",
                 source: "operator-sim",
+                ...(issue === "vibration-fault" ? fanAudio : {}),
               };
       const response = await injectSimulatorIssue(issue, payload);
       store.pushWorkflowEvent({

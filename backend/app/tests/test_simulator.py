@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from app.constants import DEMO_BASELINE_WORLD_STATE, StreamName
+from app.services.manual_simulation import _manual_injection_bucket
 from app.simulator import telemetry_generator
 from app.simulator.state_machine import build_simulated_state, build_telemetry_payload
 
@@ -37,6 +39,34 @@ def test_tick_zero_is_clean_demo_baseline() -> None:
     state = build_simulated_state(0)
 
     assert state == DEMO_BASELINE_WORLD_STATE
+
+
+def test_vibration_manual_bucket_uses_attached_audio_id() -> None:
+    timestamp = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    state = {
+        "thermal": {
+            "latest_visual_input": {
+                "audio_id": "audio-evidence-1234567890",
+                "received_at": timestamp.isoformat(),
+            }
+        }
+    }
+
+    assert _manual_injection_bucket("vibration-fault", state, timestamp) == "vibration-fault-audio-eviden"
+
+
+def test_vibration_manual_bucket_ignores_stale_audio_id() -> None:
+    timestamp = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    state = {
+        "thermal": {
+            "latest_visual_input": {
+                "audio_id": "old-audio-evidence",
+                "received_at": "2026-01-02T03:04:04+00:00",
+            }
+        }
+    }
+
+    assert _manual_injection_bucket("vibration-fault", state, timestamp) == "vibration-fault-1767323045000"
 
 
 class _FakeWorldState:

@@ -189,6 +189,10 @@ async def submit_thermal_image(request: ThermalImageInputRequest) -> ThermalImag
     response = await inject_thermal_frame(
         SimulatorInjectRequest(
             image_data_url=request.image_data_url,
+            audio_data_url=request.audio_data_url,
+            audio_mime_type=request.audio_mime_type,
+            audio_duration_s=request.audio_duration_s,
+            audio_notes=request.audio_notes,
             asset_id=request.asset_id,
             source=request.source,
             notes=request.notes,
@@ -196,6 +200,7 @@ async def submit_thermal_image(request: ThermalImageInputRequest) -> ThermalImag
     )
     return ThermalImageInputResponse(
         image_id=response.image_id or "pending",
+        audio_id=response.audio_id,
         asset_id=request.asset_id,
         analysis_status=response.analysis_status or "unknown",
         model_result=response.model_result,

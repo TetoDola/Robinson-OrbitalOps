@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import DEMO_SCENARIO_RUN_ID, StreamName
@@ -25,6 +25,38 @@ class ApprovalRequest(BaseModel):
 class RejectRequest(BaseModel):
     operator_id: str = "demo-operator"
     operator_note: str | None = None
+
+
+def _local_tool_calls_for_decision(patch: MissionPatch, *, decision: str) -> list[dict]:
+    """Tool calls the operator's host machine should run after a decision.
+
+    The backend runs in a container and cannot touch demo hardware itself, so
+    it returns declarative tool calls; the frontend dev server executes them.
+    Currently: thermal patches drive the MSI Cooler Boost fan on the demo laptop.
+    """
+    thermal_involved = any(
+        isinstance(item, dict) and item.get("agent") == "thermal_physical_agent"
+        for item in (patch.evidence or [])
+    )
+    if not thermal_involved:
+        return []
+    if decision == "approved":
+        return [
+            {
+                "tool": "cooler_boost",
+                "action": "on",
+                "command": "msi-fan.cmd cooler-boost on",
+                "reason": "Thermal mission patch approved; engaging Cooler Boost on the demo hardware.",
+            }
+        ]
+    return [
+        {
+            "tool": "cooler_boost",
+            "action": "off",
+            "command": "msi-fan.cmd cooler-boost off",
+            "reason": "Thermal mission patch rejected; restoring the normal fan profile.",
+        }
+    ]
 
 
 @router.get("/mission-patches")
@@ -77,6 +109,7 @@ async def approve_mission_patch(
         "mission_patch": _patch_payload(patch),
         "commands_created": created_commands,
         "commands": [_command_payload(command) for command in commands],
+        "local_tool_calls": _local_tool_calls_for_decision(patch, decision="approved"),
     }
 
 
@@ -98,7 +131,11 @@ async def reject_mission_patch(
     )
 
     await publish_outbox_events_by_keys(outbox_keys)
-    return {"mission_patch": _patch_payload(patch), "rejection_created": created_rejection}
+    return {
+        "mission_patch": _patch_payload(patch),
+        "rejection_created": created_rejection,
+        "local_tool_calls": _local_tool_calls_for_decision(patch, decision="rejected"),
+    }
 
 
 async def approve_patch_transaction(
@@ -265,10 +302,17 @@ async def _sync_agent_statuses_for_decision(session: AsyncSession, patch_id: str
     Without this, the heartbeat re-emits the stale awaiting_approval row
     forever and the UI shows an approval that no longer exists.
     """
-    result = await session.execute(select(AgentStatus).where(AgentStatus.linked_mission_patch_id == patch_id))
+    result = await session.execute(
+        select(AgentStatus).where(
+            or_(
+                AgentStatus.linked_mission_patch_id == patch_id,
+                AgentStatus.status.in_(["awaiting_approval", "included_in_patch"]),
+            )
+        )
+    )
     now = datetime.now(timezone.utc)
     for row in result.scalars().all():
-        if row.status != "awaiting_approval":
+        if row.status not in {"awaiting_approval", "included_in_patch"}:
             continue
         is_commander = row.agent == "commander_agent"
         if decision == "approved":
@@ -292,6 +336,7 @@ async def _sync_agent_statuses_for_decision(session: AsyncSession, patch_id: str
             row.linked_mission_patch_id = None
         row.updated_by = "approval_flow"
         row.updated_at = now
+        row.linked_mission_patch_id = None
 
 
 async def _locked_patch(session: AsyncSession, patch_id: str) -> MissionPatch:

@@ -61,7 +61,7 @@ ISSUE_AGENTS: dict[str, tuple[str, str, list[FindingBuilder]]] = {
     ),
     "downlink-constraint": (
         "checkpoint_downlink_agent",
-        "downlink constraint detected; gathering checkpoint and contact-window data.",
+        "bulk data request received; gathering bandwidth, contact-window, and orbit data to plan chunked transfer.",
         [build_checkpoint_downlink_finding],
     ),
     "vibration-fault": (
@@ -83,7 +83,7 @@ async def inject_named_issue(issue: str, request: SimulatorInjectRequest) -> Sim
     async with session_context() as session:
         current = await read_world_state(session)
         base_state = deepcopy(current.state if current is not None else DEMO_BASELINE_WORLD_STATE)
-        patch = _issue_state_patch(issue, base_state, request)
+        patch = _issue_state_patch(issue, base_state, request, timestamp)
         world_state = await write_world_state(
             session,
             patch,
@@ -106,17 +106,32 @@ async def inject_named_issue(issue: str, request: SimulatorInjectRequest) -> Sim
                 event_type=f"simulator.inject.{issue}",
                 asset_id=request.asset_id,
                 severity="ORANGE",
-                payload={"issue": issue, "source": request.source, "notes": request.notes},
+                payload={
+                    "issue": issue,
+                    "source": request.source,
+                    "notes": request.notes,
+                    "audio_id": "attached" if request.audio_data_url else None,
+                    "audio_notes": request.audio_notes,
+                },
                 created_at=timestamp,
             )
         )
         await session.commit()
 
     await _publish_world_state(world_state, timestamp)
-    await _publish_injection_event(issue, world_state.version, timestamp, {"source": request.source})
+    await _publish_injection_event(
+        issue,
+        world_state.version,
+        timestamp,
+        {"source": request.source, "audio_attached": bool(request.audio_data_url)},
+    )
 
-    finding_ids = await _run_builders(world_state.state, builders)
-    patch = await build_commander_patch()
+    finding_ids = await _run_builders(
+        world_state.state,
+        builders,
+        scenario_time_bucket=_manual_injection_bucket(issue, world_state.state, timestamp),
+    )
+    patch = await build_commander_patch(finding_ids=finding_ids)
     return SimulatorInjectResponse(
         issue=issue,
         status="injected",
@@ -129,6 +144,7 @@ async def inject_named_issue(issue: str, request: SimulatorInjectRequest) -> Sim
 async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInjectResponse:
     timestamp = datetime.now(timezone.utc)
     image_id = str(uuid.uuid4())
+    audio_id = str(uuid.uuid4()) if request.audio_data_url else None
     image_data_url = request.image_data_url or _sample_thermal_png_data_url()
     latest_input = {
         "id": image_id,
@@ -137,6 +153,11 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
         "notes": request.notes,
         "received_at": timestamp.isoformat(),
         "image_data_url": image_data_url,
+        "audio_id": audio_id,
+        "audio_data_url": request.audio_data_url,
+        "audio_mime_type": request.audio_mime_type,
+        "audio_duration_s": request.audio_duration_s,
+        "audio_notes": request.audio_notes,
         "analysis_status": "pending",
         "model_result": None,
     }
@@ -166,7 +187,7 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
                 event_type="thermal.image.received",
                 asset_id=latest_input["asset_id"],
                 severity="ORANGE",
-                payload={key: value for key, value in latest_input.items() if key != "image_data_url"},
+                payload={key: value for key, value in latest_input.items() if key not in {"image_data_url", "audio_data_url"}},
                 created_at=timestamp,
             )
         )
@@ -177,7 +198,12 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
         "thermal-frame",
         world_state.version,
         timestamp,
-        {"image_id": image_id, "analysis_status": "pending", "asset_id": latest_input["asset_id"]},
+        {
+            "image_id": image_id,
+            "audio_id": audio_id,
+            "analysis_status": "pending",
+            "asset_id": latest_input["asset_id"],
+        },
     )
 
     deterministic_finding = _thermal_image_finding(world_state.state, latest_input, None)
@@ -188,11 +214,19 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
             status="analyzing",
             phase="model",
             severity="ORANGE",
-            message=f"Sending thermal frame and telemetry to {settings.crusoe_multimodal_model}.",
+            message=(
+                f"Sending thermal frame, fan audio, and telemetry to {settings.crusoe_multimodal_model}."
+                if request.audio_data_url
+                else f"Sending thermal frame and telemetry to {settings.crusoe_multimodal_model}."
+            ),
         )
         await session.commit()
     model_result = await analyze_thermal_ir_image(
         image_data_url,
+        audio_data_url=request.audio_data_url,
+        audio_mime_type=request.audio_mime_type,
+        audio_duration_s=request.audio_duration_s,
+        audio_notes=request.audio_notes,
         state=world_state.state,
         finding=deterministic_finding,
     )
@@ -226,6 +260,7 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
             "timestamp": update_timestamp.isoformat(),
             "payload": {
                 "image_id": image_id,
+                "audio_id": audio_id,
                 "asset_id": latest_input["asset_id"],
                 "analysis_status": analysis_status,
                 "model_result": model_result,
@@ -238,7 +273,7 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
     finding_id = finding.id if finding is not None else None
     if finding is not None:
         await _publish_finding(finding, payload)
-    patch = await build_commander_patch()
+    patch = await build_commander_patch(finding_ids=[finding_id] if finding_id else [])
 
     return SimulatorInjectResponse(
         issue="thermal-frame",
@@ -246,19 +281,27 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
         world_state_version=world_state.version,
         finding_ids=[finding_id] if finding_id else [],
         image_id=image_id,
+        audio_id=audio_id,
         mission_patch_id=patch.id if patch else None,
         analysis_status=analysis_status,
         model_result=model_result,
     )
 
 
-async def _run_builders(state: dict[str, Any], builders: list[FindingBuilder]) -> list[str]:
+async def _run_builders(
+    state: dict[str, Any],
+    builders: list[FindingBuilder],
+    *,
+    scenario_time_bucket: str | None = None,
+) -> list[str]:
     finding_ids: list[str] = []
     agent_state = await enrich_agent_world_state(state)
     for builder in builders:
         payload = builder(agent_state)
         if payload is None:
             continue
+        if scenario_time_bucket is not None:
+            payload = {**payload, "scenario_time_bucket": scenario_time_bucket}
         if _agent_analysis_enabled():
             await _emit_model_request(payload["agent_name"])
         payload, analysis = await _apply_agent_analysis(agent_state, payload)
@@ -333,7 +376,12 @@ async def _publish_injection_event(
     )
 
 
-def _issue_state_patch(issue: str, state: dict[str, Any], request: SimulatorInjectRequest) -> dict[str, Any]:
+def _issue_state_patch(
+    issue: str,
+    state: dict[str, Any],
+    request: SimulatorInjectRequest,
+    timestamp: datetime,
+) -> dict[str, Any]:
     if issue == "workload-stall":
         return {
             "nodes": _nodes_with(state, {"node-a": {"gpu_util": 96, "rank_lag": 0.11, "status": "training_straggler"}}),
@@ -357,18 +405,47 @@ def _issue_state_patch(issue: str, state: dict[str, Any], request: SimulatorInje
         }
     if issue == "downlink-constraint":
         return {
-            "downlink": {"window_open": True, "capacity_gb": 22, "used_gb": 0, "time_remaining_min": 18},
+            "downlink": {
+                "window_open": True,
+                "capacity_gb": 22,
+                "used_gb": 0,
+                "time_remaining_min": 18,
+                "pending_request": {
+                    "id": "req-model-export-01",
+                    "requested_by": "ground-ops",
+                    "description": "full model weights export",
+                    "size_gb": 5120,
+                    "priority": "high",
+                },
+            },
             "training": {"latest_checkpoint": "ckpt-184900", "latest_checkpoint_status": "trusted"},
         }
     if issue == "vibration-fault":
+        latest_input = _thermal_audio_input_from_request(request, timestamp) if request.audio_data_url else None
+        thermal_patch: dict[str, Any] = {
+            "highest_temp_c": 84,
+            "hotspot_node": request.asset_id,
+            "cooling_status": "degraded",
+        }
+        if latest_input is not None:
+            thermal_patch["latest_visual_input"] = latest_input
         return {
-            "thermal": {"highest_temp_c": 84, "hotspot_node": request.asset_id, "cooling_status": "degraded"},
+            "thermal": thermal_patch,
             "nodes": _nodes_with(
                 state,
                 {request.asset_id: {"status": "cooling_loop_risk", "temp_c": 84, "vibration_score": 0.91}},
             ),
         }
     raise UnknownSimulatorIssueError(f"Unsupported simulator issue: {issue}")
+
+
+def _manual_injection_bucket(issue: str, state: dict[str, Any], timestamp: datetime) -> str:
+    latest_input = (state.get("thermal") or {}).get("latest_visual_input") or {}
+    if issue == "vibration-fault":
+        evidence_id = latest_input.get("audio_id") or latest_input.get("id")
+        if evidence_id and latest_input.get("received_at") == timestamp.isoformat():
+            return f"{issue}-{str(evidence_id)[:12]}"
+    return f"{issue}-{int(timestamp.timestamp() * 1000)}"
 
 
 def _thermal_state_patch(state: dict[str, Any], latest_input: dict[str, Any]) -> dict[str, Any]:
@@ -400,6 +477,24 @@ def _nodes_with(state: dict[str, Any], updates: dict[str, dict[str, Any]]) -> li
     return nodes
 
 
+def _thermal_audio_input_from_request(request: SimulatorInjectRequest, timestamp: datetime) -> dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "asset_id": request.asset_id or "node-c",
+        "source": request.source,
+        "notes": request.notes or "Structure-borne vibration fault with fan audio evidence.",
+        "received_at": timestamp.isoformat(),
+        "image_data_url": request.image_data_url or _sample_thermal_png_data_url(),
+        "audio_id": str(uuid.uuid4()),
+        "audio_data_url": request.audio_data_url,
+        "audio_mime_type": request.audio_mime_type,
+        "audio_duration_s": request.audio_duration_s,
+        "audio_notes": request.audio_notes,
+        "analysis_status": "audio_correlation_only",
+        "model_result": None,
+    }
+
+
 def _thermal_image_finding(
     state: dict[str, Any],
     latest_input: dict[str, Any],
@@ -419,6 +514,7 @@ def _thermal_image_finding(
                 f"{asset_id} is the current hotspot asset",
                 "Cooling status is degraded",
                 "Operator supplied a thermal IR frame",
+                *(_audio_evidence(latest_input)),
                 *model_evidence,
             ]
         ),
@@ -437,6 +533,18 @@ def _analysis_status(model_result: dict[str, Any] | None) -> str:
     if not settings.crusoe_enabled or not settings.crusoe_api_key:
         return "blocked_missing_crusoe_config"
     return "failed"
+
+
+def _audio_evidence(latest_input: dict[str, Any]) -> list[str]:
+    if not latest_input.get("audio_data_url"):
+        return []
+    duration = latest_input.get("audio_duration_s")
+    duration_text = f" ({float(duration):.1f}s)" if isinstance(duration, int | float) else ""
+    notes = latest_input.get("audio_notes")
+    return [
+        f"Operator supplied fan audio evidence{duration_text}",
+        str(notes) if isinstance(notes, str) and notes.strip() else "Fan audio contains high-RPM cooling noise",
+    ]
 
 
 def _thermal_status_message(analysis_status: str, model_result: dict[str, Any] | None) -> str:

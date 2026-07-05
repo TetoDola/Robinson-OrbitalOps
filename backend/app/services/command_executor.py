@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.constants import StreamName
 from app.db.models import AgentFinding, AgentStatus, Command, Incident, MissionPatch
@@ -187,7 +187,14 @@ async def execute_commands_in_session(
         mission_patch.updated_at = datetime.now(timezone.utc)
         # Return linked agents to monitoring so their status reflects the
         # verified outcome instead of the last approval-era message.
-        agent_rows = await session.execute(select(AgentStatus).where(AgentStatus.linked_mission_patch_id == patch_id))
+        agent_rows = await session.execute(
+            select(AgentStatus).where(
+                or_(
+                    AgentStatus.linked_mission_patch_id == patch_id,
+                    AgentStatus.status.in_(["awaiting_approval", "included_in_patch"]),
+                )
+            )
+        )
         for agent_row in agent_rows.scalars().all():
             agent_row.status = "monitoring"
             agent_row.phase = "monitor"

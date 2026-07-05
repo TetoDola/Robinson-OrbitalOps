@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { approveMissionPatch, rejectMissionPatch } from "../api/client";
+import { runHardwareToolCalls } from "../services/localTools";
 import { useWorldStore, type AgentLogItem } from "../store/worldStore";
 import type {
   AgentFinding,
@@ -16,6 +17,7 @@ import type {
   ThermalVisualInput,
   WorldState,
 } from "../types/backend";
+import { CoolingTrendPanel } from "./SimulationControls";
 
 type Tone = "nominal" | "warn" | "critical";
 
@@ -57,7 +59,6 @@ const fallbackAgents: AgentStatusItem[] = [
   "radiation_integrity_agent",
   "checkpoint_downlink_agent",
   "vibration_health_agent",
-  "commander_agent",
 ].map((agent) => ({
   agent,
   display_name: agent
@@ -88,6 +89,7 @@ function workStateClass(agent: AgentStatusItem, missionPatchStatus?: string | nu
   if (agent.agent === "commander_agent" && isActivePatchStatus(missionPatchStatus)) return "status-orange";
   if (value.includes("monitor") || value.includes("healthy")) return "status-green";
   if (value.includes("analy") || value.includes("detect") || value.includes("running")) return "status-cyan";
+  if (value.includes("included") || value.includes("handoff")) return "status-orange";
   if (value.includes("propos") || value.includes("planning") || value.includes("approval")) return "status-orange";
   if (value.includes("blocked") || value.includes("failed")) return "status-red";
   return "status-cyan";
@@ -112,6 +114,28 @@ function isActivePatchStatus(status: string | null | undefined): boolean {
 // until the next poll). Never display "awaiting approval" unless a patch is
 // actually pending — reconcile every agent against the live patch state.
 function reconcileAgent(agent: AgentStatusItem, missionPatch: MissionPatch | null): AgentStatusItem {
+  if (agent.agent !== "commander_agent" && ["awaiting_approval", "included_in_patch"].includes(agent.status)) {
+    if (missionPatch?.status !== "pending_approval" || patchEvidenceForAgent(agent, missionPatch).length === 0) {
+      return {
+        ...agent,
+        status: "monitoring",
+        phase: "monitor",
+        severity: "INFO",
+        message:
+          missionPatch?.status === "pending_approval"
+            ? "Monitoring assigned domain; current Mission Patch is scoped to another detector."
+            : "Monitoring assigned domain; no Mission Patch is currently pending.",
+        linked_mission_patch_id: null,
+      };
+    }
+    return {
+      ...agent,
+      status: "included_in_patch",
+      phase: "handoff",
+      message: "Finding included in pending Mission Patch.",
+      linked_mission_patch_id: missionPatch.id,
+    };
+  }
   if (agent.status !== "awaiting_approval" || missionPatch?.status === "pending_approval") return agent;
   const message =
     missionPatch?.status === "rejected"
@@ -149,6 +173,157 @@ function formatDate(value: string | undefined): string {
 function formatLatency(milliseconds: number | null | undefined): string {
   if (typeof milliseconds !== "number" || Number.isNaN(milliseconds)) return "unknown time";
   return `${(milliseconds / 1000).toFixed(1)}s`;
+}
+
+function audioSizeLabel(dataUrl: string | null | undefined): string {
+  if (!dataUrl || !dataUrl.includes(",")) return "audio";
+  const base64Length = dataUrl.split(",", 2)[1]?.length ?? 0;
+  const bytes = Math.max(0, Math.floor((base64Length * 3) / 4));
+  return bytes > 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+}
+
+function drawAudioFallback(canvas: HTMLCanvasElement, seedText: string) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const { width, height } = canvas;
+  const style = getComputedStyle(canvas);
+  const line = style.getPropertyValue("--line") || "rgba(255,255,255,0.16)";
+  const green = style.getPropertyValue("--green") || "rgb(85,220,150)";
+  const orange = style.getPropertyValue("--orange") || "rgb(235,145,70)";
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.16)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = line;
+  ctx.lineWidth = 1;
+  for (let y = 12; y < height; y += 16) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  let seed = 0;
+  for (let i = 0; i < seedText.length; i += 1) {
+    seed = (seed * 31 + seedText.charCodeAt(i)) >>> 0;
+  }
+  const bars = Math.floor(width / 4);
+  const mid = height * 0.52;
+  for (let i = 0; i < bars; i += 1) {
+    seed = (1664525 * seed + 1013904223) >>> 0;
+    const t = i / Math.max(1, bars - 1);
+    const rumble = Math.sin(t * Math.PI * 12) * 0.28 + Math.sin(t * Math.PI * 31) * 0.14;
+    const random = (seed / 0xffffffff - 0.5) * 0.38;
+    const alarm = Math.max(0, Math.sin((t - 0.28) * Math.PI * 14)) * 0.3;
+    const amp = Math.max(0.12, Math.min(0.95, 0.38 + rumble + random + alarm));
+    const x = i * 4 + 1;
+    const h = amp * height * 0.42;
+    ctx.strokeStyle = i % 9 === 0 ? orange : green;
+    ctx.beginPath();
+    ctx.moveTo(x, mid - h);
+    ctx.lineTo(x, mid + h);
+    ctx.stroke();
+  }
+}
+
+async function drawDecodedAudio(canvas: HTMLCanvasElement, audioDataUrl: string): Promise<boolean> {
+  const AudioContextClass =
+    window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextClass) return false;
+  const response = await fetch(audioDataUrl);
+  const bytes = await response.arrayBuffer();
+  const audioContext = new AudioContextClass();
+  try {
+    const buffer = await audioContext.decodeAudioData(bytes.slice(0));
+    const data = buffer.getChannelData(0);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return false;
+    const { width, height } = canvas;
+    const style = getComputedStyle(canvas);
+    const line = style.getPropertyValue("--line") || "rgba(255,255,255,0.16)";
+    const green = style.getPropertyValue("--green") || "rgb(85,220,150)";
+    const orange = style.getPropertyValue("--orange") || "rgb(235,145,70)";
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.16)";
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1;
+    for (let y = 12; y < height; y += 16) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+    const mid = height * 0.52;
+    const columns = Math.floor(width / 3);
+    const samplesPerColumn = Math.max(1, Math.floor(data.length / columns));
+    for (let x = 0; x < columns; x += 1) {
+      let min = 1;
+      let max = -1;
+      for (let i = 0; i < samplesPerColumn; i += 1) {
+        const sample = data[x * samplesPerColumn + i] ?? 0;
+        min = Math.min(min, sample);
+        max = Math.max(max, sample);
+      }
+      ctx.strokeStyle = x % 11 === 0 ? orange : green;
+      ctx.beginPath();
+      ctx.moveTo(x * 3 + 1, mid + min * height * 0.45);
+      ctx.lineTo(x * 3 + 1, mid + max * height * 0.45);
+      ctx.stroke();
+    }
+    return true;
+  } finally {
+    void audioContext.close();
+  }
+}
+
+function AudioEvidenceCard({ input, compact = false }: { input: ThermalVisualInput; compact?: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const audioUrl = input.audio_data_url;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !audioUrl) return;
+    let cancelled = false;
+    drawAudioFallback(canvas, input.audio_notes ?? audioUrl);
+    void drawDecodedAudio(canvas, audioUrl)
+      .then((decoded) => {
+        if (!decoded && !cancelled) {
+          drawAudioFallback(canvas, input.audio_notes ?? audioUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          drawAudioFallback(canvas, input.audio_notes ?? audioUrl);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [audioUrl, input.audio_notes]);
+
+  if (!audioUrl) return null;
+
+  return (
+    <div className={compact ? "audio-evidence-card is-compact" : "audio-evidence-card"}>
+      <div className="audio-evidence-head">
+        <span className="label">fan audio evidence</span>
+        <strong>{input.audio_duration_s?.toFixed(1) ?? "--"}s</strong>
+      </div>
+      <canvas
+        aria-label="Fan audio waveform"
+        className="audio-waveform"
+        height={compact ? 58 : 84}
+        ref={canvasRef}
+        width={compact ? 260 : 360}
+      />
+      <div className="audio-evidence-meta">
+        <span>{input.audio_mime_type ?? "audio/mpeg"}</span>
+        <span>{audioSizeLabel(audioUrl)}</span>
+      </div>
+      {input.audio_notes ? <p>{input.audio_notes}</p> : null}
+      <audio controls src={audioUrl} title={input.audio_notes ?? "Fan audio sent to the model"} />
+    </div>
+  );
 }
 
 function stepStatusClass(status: FlowStatus): string {
@@ -216,6 +391,7 @@ function buildAgentFlowNodes({
 }): AgentFlowNode[] {
   const active = isAgentActive(agent);
   const hasFinding = Boolean(latestFinding);
+  const hasOpenFinding = latestFinding?.status === "open";
   const reply = modelReplyText(latestFinding, activityLog, thermalInput);
   const request = modelRequestText(activityLog);
   const hasPatch = Boolean(missionPatch && patchRelevant);
@@ -291,17 +467,17 @@ function buildAgentFlowNodes({
 
   const commander: AgentFlowNode = {
     key: "commander",
-    label: "commander",
+    label: "mission patch",
     sub: hasPatch ? `patch ${shortId(missionPatch?.id)}` : undefined,
-    status: hasPatch ? "complete" : (isCommander ? openFindingCount > 0 : hasFinding) ? "running" : "pending",
+    status: hasPatch ? "complete" : (isCommander ? openFindingCount > 0 : hasOpenFinding) ? "running" : "pending",
     lines: [
       hasPatch
         ? clip(missionPatch?.summary ?? "Findings grouped into a mission patch.")
-        : (isCommander ? openFindingCount > 0 : hasFinding)
+        : (isCommander ? openFindingCount > 0 : hasOpenFinding)
           ? "Grouping open findings into a mission patch."
           : isCommander
             ? clip(agent.message)
-            : "No report needed yet.",
+            : "No active Mission Patch for this detector.",
     ],
   };
 
@@ -619,10 +795,12 @@ function LiveFlowTranscript({
   log,
   signalRows,
   thermalInput,
+  audioInput,
 }: {
   log: AgentLogItem[];
   signalRows: SignalRow[];
   thermalInput: ThermalVisualInput | null;
+  audioInput: ThermalVisualInput | null;
 }) {
   const scrollRef = useRef<HTMLOListElement | null>(null);
   // agentLogs store newest-first; a transcript reads oldest -> newest.
@@ -663,8 +841,11 @@ function LiveFlowTranscript({
                   ))}
                 </div>
                 {thermalInput ? (
-                  <img alt={`Frame sent to the model for ${thermalInput.asset_id}`} src={thermalInput.image_data_url} />
+                  <>
+                    <img alt={`Frame sent to the model for ${thermalInput.asset_id}`} src={thermalInput.image_data_url} />
+                  </>
                 ) : null}
+                {audioInput ? <AudioEvidenceCard input={audioInput} compact /> : null}
               </div>
             ) : null}
           </li>
@@ -738,8 +919,15 @@ function AgentDetailModal({
     patchCommands.length || relatedCommands.length || commandCount,
     missionPatch?.status ?? null,
   );
+  const latestThermalInput = worldState?.thermal.latest_visual_input ?? null;
   const thermalInput: ThermalVisualInput | null =
-    agent.agent === "thermal_physical_agent" ? (worldState?.thermal.latest_visual_input ?? null) : null;
+    agent.agent === "thermal_physical_agent" ? latestThermalInput : null;
+  const audioInput: ThermalVisualInput | null =
+    thermalInput?.audio_data_url
+      ? thermalInput
+      : agent.agent === "vibration_health_agent" && latestThermalInput?.audio_data_url
+        ? latestThermalInput
+        : null;
   const patchStatus = missionPatch?.status ?? null;
   const evidenceItems = patchEvidenceForAgent(agent, missionPatch);
   const approvalTitle = approvalProblemTitle(agent, latestFinding, evidenceItems, missionPatch, thermalInput);
@@ -840,7 +1028,7 @@ function AgentDetailModal({
               </div>
               <b className="status-cyan">chronological</b>
             </div>
-            <LiveFlowTranscript log={activityLog} signalRows={signalRows} thermalInput={thermalInput} />
+            <LiveFlowTranscript log={activityLog} signalRows={signalRows} thermalInput={thermalInput} audioInput={audioInput} />
           </section>
 
           {missionPatch && patchRelevantToAgent && patchCommandCount > 0 ? (
@@ -875,15 +1063,20 @@ function AgentDetailModal({
                   </div>
                 </div>
                 <div className="approval-visual">
-                  <span className="label">{thermalInput ? "visual evidence" : "evidence source"}</span>
+                  <span className="label">
+                    {thermalInput ? "visual evidence" : audioInput ? "audio evidence" : "evidence source"}
+                  </span>
                   {thermalInput ? (
                     <>
                       <img alt={`Thermal approval evidence for ${thermalInput.asset_id}`} src={thermalInput.image_data_url} />
                       <small>
                         {thermalInput.model_result?.model ?? "deterministic telemetry"} | {humanize(thermalInput.analysis_status)}
                       </small>
+                      {audioInput ? <AudioEvidenceCard input={audioInput} /> : null}
                       {thermalInput.model_result?.summary ? <p>{thermalInput.model_result.summary}</p> : null}
                     </>
+                  ) : audioInput ? (
+                    <AudioEvidenceCard input={audioInput} />
                   ) : (
                     <div className="approval-no-visual">
                       This approval is based on telemetry, agent findings, and Commander validation.
@@ -927,10 +1120,12 @@ function AgentDetailModal({
             </section>
           ) : null}
 
+          {agent.agent === "thermal_physical_agent" ? <CoolingTrendPanel className="agent-cooling-trend" /> : null}
+
           <section className="agent-modal-section span-2">
             <div className="section-header compact">
               <div>
-                <div className="eyebrow">current finding</div>
+                <div className="eyebrow">{latestFinding?.status === "open" ? "current finding" : "latest report"}</div>
                 <strong>{latestFinding?.finding ?? "No open finding reported"}</strong>
               </div>
               <b className={toneClass(latestFinding ? "warn" : "nominal")}>
@@ -979,6 +1174,11 @@ function AgentDetailModal({
                 </b>
               </div>
               <img alt={`Thermal input for ${thermalInput.asset_id}`} src={thermalInput.image_data_url} />
+              {thermalInput.audio_data_url ? (
+                <div className="thermal-frame-audio">
+                  <AudioEvidenceCard input={thermalInput} />
+                </div>
+              ) : null}
               <div className="thermal-frame-meta">
                 <span>{formatDate(thermalInput.received_at)}</span>
                 <span>{thermalInput.model_result?.model ?? "deterministic fallback"}</span>
@@ -1050,9 +1250,9 @@ export default function AgentStatus() {
   const agentLogs = useWorldStore((state) => state.agentLogs);
   const aiStatus = useWorldStore((state) => state.aiStatus);
   const missionPatchForReconcile = useWorldStore((state) => state.missionPatch);
-  const visibleAgents = (agents.length > 0 ? agents : fallbackAgents).map((agent) =>
-    reconcileAgent(agent, missionPatchForReconcile),
-  );
+  const visibleAgents = (agents.length > 0 ? agents : fallbackAgents)
+    .map((agent) => reconcileAgent(agent, missionPatchForReconcile))
+    .filter((agent) => agent.agent !== "commander_agent");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
@@ -1082,8 +1282,11 @@ export default function AgentStatus() {
     setApprovalError(null);
     setPatchMode("execute");
     try {
-      const updatedPatch = await approveMissionPatch(missionPatch.id);
-      setMissionPatch(updatedPatch);
+      const decision = await approveMissionPatch(missionPatch.id);
+      setMissionPatch(decision.patch);
+      if (decision.localToolCalls.length > 0) {
+        void runHardwareToolCalls(decision.localToolCalls);
+      }
     } catch {
       setPatchMode("pending");
       setApprovalError("Approve failed — the backend rejected the request or is unreachable. The patch is still pending.");
@@ -1098,8 +1301,11 @@ export default function AgentStatus() {
     setApprovalError(null);
     setPatchMode("reject");
     try {
-      const updatedPatch = await rejectMissionPatch(missionPatch.id);
-      setMissionPatch(updatedPatch);
+      const decision = await rejectMissionPatch(missionPatch.id);
+      setMissionPatch(decision.patch);
+      if (decision.localToolCalls.length > 0) {
+        void runHardwareToolCalls(decision.localToolCalls);
+      }
     } catch {
       setPatchMode("pending");
       setApprovalError("Reject failed — the backend rejected the request or is unreachable. The patch is still pending.");
@@ -1111,34 +1317,22 @@ export default function AgentStatus() {
   return (
     <section className="rail-section" aria-label="Independent agent status">
       <div className="eyebrow">agent system</div>
-      <ol className="agent-system-flow">
-        <li>
-          <span>01</span>
-          <strong>runtime trigger</strong>
-        </li>
-        <li>
-          <span>02</span>
-          <strong>Commander dispatch</strong>
-        </li>
-        <li>
-          <span>03</span>
-          <strong>AI analysis</strong>
-        </li>
-        <li>
-          <span>04</span>
-          <strong>patch or monitor</strong>
-        </li>
-      </ol>
       <div className="agent-status-list">
         {visibleAgents.map((agent) => {
           const runtime = agentRuntime.find((item) => item.agent === agent.agent);
-          const hasReport = agentFindings.some((finding) => finding.agent_name === agent.agent);
+          const latestReport = agentFindings.find((finding) => finding.agent_name === agent.agent);
+          const hasReport = Boolean(latestReport);
+          const includedInPatch = patchEvidenceForAgent(agent, missionPatch).length > 0;
           const flowLine = isAgentActive(agent)
-            ? "Commander dispatch -> gathering data"
-            : hasReport
-              ? "report sent to Commander"
+            ? "dispatch -> gathering data"
+            : includedInPatch && isActivePatchStatus(missionPatchStatus)
+              ? "finding included in Mission Patch"
+              : hasReport
+              ? latestReport?.status === "open"
+                ? "report handed to Mission Patch"
+                : "last report resolved"
               : runtime?.run_state === "awaiting_approval"
-                ? "Commander waiting for approval"
+                ? "Mission Patch waiting for approval"
                 : "watching triggers";
           return (
             <button

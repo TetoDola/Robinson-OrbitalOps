@@ -64,6 +64,10 @@ class AgentsRuntimeResponse(BaseModel):
 
 class ThermalImageInputRequest(BaseModel):
     image_data_url: str = Field(..., min_length=16)
+    audio_data_url: str | None = None
+    audio_mime_type: str | None = None
+    audio_duration_s: float | None = None
+    audio_notes: Optional[str] = None
     asset_id: str = "node-c"
     source: str = "operator-upload"
     notes: Optional[str] = None
@@ -71,6 +75,7 @@ class ThermalImageInputRequest(BaseModel):
 
 class ThermalImageInputResponse(BaseModel):
     image_id: str
+    audio_id: str | None = None
     asset_id: str
     analysis_status: str
     model_result: dict[str, Any] | None = None

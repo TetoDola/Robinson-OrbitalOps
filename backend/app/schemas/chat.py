@@ -25,6 +25,8 @@ class ChatContextSummary(BaseModel):
     world_version: int | None = None
     agent_count: int
     open_findings: int
+    incident_count: int = 0
+    mission_patch_count: int = 0
     command_count: int = 0
     queued_commands: int = 0
     running_commands: int = 0

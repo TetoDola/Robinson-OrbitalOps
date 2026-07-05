@@ -6,6 +6,7 @@ import {
 } from "react";
 
 import { approveMissionPatch, rejectMissionPatch } from "../api/client";
+import { runHardwareToolCalls } from "../services/localTools";
 import { useWorldStore, type PatchMode } from "../store/worldStore";
 import type { MissionPatchAction, NodeState } from "../types/backend";
 import AgentStatus from "./AgentStatus";
@@ -206,8 +207,11 @@ export default function MissionPatchPanel() {
     setPatchMode("execute");
 
     try {
-      const updatedPatch = await approveMissionPatch(missionPatch.id);
-      setMissionPatch(updatedPatch);
+      const decision = await approveMissionPatch(missionPatch.id);
+      setMissionPatch(decision.patch);
+      if (decision.localToolCalls.length > 0) {
+        void runHardwareToolCalls(decision.localToolCalls);
+      }
     } catch {
       setPatchMode("pending");
       setApprovalError("Approve failed — the backend rejected the request or is unreachable. The patch is still pending.");
@@ -220,8 +224,11 @@ export default function MissionPatchPanel() {
     setPatchMode("reject");
 
     try {
-      const updatedPatch = await rejectMissionPatch(missionPatch.id);
-      setMissionPatch(updatedPatch);
+      const decision = await rejectMissionPatch(missionPatch.id);
+      setMissionPatch(decision.patch);
+      if (decision.localToolCalls.length > 0) {
+        void runHardwareToolCalls(decision.localToolCalls);
+      }
     } catch {
       setPatchMode("pending");
       setApprovalError("Reject failed — the backend rejected the request or is unreachable. The patch is still pending.");

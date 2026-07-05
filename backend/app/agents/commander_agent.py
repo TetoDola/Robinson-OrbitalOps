@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 
 from sqlalchemy import select
 
 from app.agents.data_context import enrich_agent_world_state
+from app.agents.domain_agents import plan_downlink_chunks
 from app.constants import DEMO_BASELINE_WORLD_STATE, DEMO_SCENARIO_RUN_ID, CommandType, StreamName
 from app.core.safety import SafetyResult, validate_mission_patch
-from app.db.models import AgentFinding, Incident, MissionPatch, WorldStateCurrent
+from app.db.models import AgentFinding, AgentStatus, Incident, MissionPatch, WorldStateCurrent
 from app.db.session import session_context
 from app.services.agent_status import emit_agent_status
 from app.services.event_bus import publish_stream_event
@@ -63,13 +64,33 @@ def build_mission_patch_actions(world_state: dict[str, Any], findings: list[Agen
         )
 
     if CommandType.transfer_priority.value in recommendations:
-        actions.append(
-            {
-                "type": CommandType.transfer_priority.value,
-                "send_first": ["checkpoint_manifest", "checkpoint_hashes", "training_logs", "delta_checkpoint"],
-                "defer": ["full_checkpoint"],
-            }
-        )
+        chunk_plan = plan_downlink_chunks(world_state.get("downlink") or {})
+        if chunk_plan is not None:
+            actions.append(
+                {
+                    "type": CommandType.transfer_priority.value,
+                    "send_first": [
+                        "transfer_manifest",
+                        "chunk_hashes",
+                        f"chunk_001..chunk_{chunk_plan['chunk_count']:03d} ({chunk_plan['chunk_gb']} GB each)",
+                    ],
+                    "defer": ["non_critical_telemetry_archive"],
+                    "reason": (
+                        f"Chunk {chunk_plan['request_gb']:.0f} GB request into {chunk_plan['chunk_count']} x "
+                        f"{chunk_plan['chunk_gb']} GB windows across {chunk_plan['orbits_needed']} orbits "
+                        f"(~{chunk_plan['estimated_days']} days)"
+                    ),
+                    "chunk_plan": chunk_plan,
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "type": CommandType.transfer_priority.value,
+                    "send_first": ["checkpoint_manifest", "checkpoint_hashes", "training_logs", "delta_checkpoint"],
+                    "defer": ["full_checkpoint"],
+                }
+            )
 
     if CommandType.snapshot_evidence.value in recommendations:
         actions.append(
@@ -97,14 +118,14 @@ async def build_phase3_patch() -> MissionPatch | None:
     return await build_commander_patch()
 
 
-async def build_commander_patch() -> MissionPatch | None:
+async def build_commander_patch(finding_ids: Sequence[str] | None = None) -> MissionPatch | None:
     created_patch = False
     updated_patch: MissionPatch | None = None
     async with session_context() as session:
         world_state_row = await _current_world_state(session)
         raw_world_state = world_state_row.state if world_state_row is not None else DEMO_BASELINE_WORLD_STATE
         world_state = await enrich_agent_world_state(raw_world_state)
-        findings = await _open_findings(session)
+        findings = await _open_findings(session, finding_ids=finding_ids)
         await emit_agent_status(
             session,
             agent_name="commander_agent",
@@ -116,6 +137,8 @@ async def build_commander_patch() -> MissionPatch | None:
         if not findings:
             await session.commit()
             return None
+        if finding_ids is not None:
+            await _retire_superseded_open_findings(session, findings)
 
         severity = _max_severity(findings)
         await emit_agent_status(
@@ -164,17 +187,7 @@ async def build_commander_patch() -> MissionPatch | None:
                     linked_incident_id=incident.id,
                     linked_mission_patch_id=existing_patch.id,
                 )
-                for agent_name in sorted({finding.agent_name for finding in findings}):
-                    await emit_agent_status(
-                        session,
-                        agent_name=agent_name,
-                        status="awaiting_approval",
-                        phase="approve",
-                        severity=severity,
-                        message="Related recommendation is waiting for Mission Patch approval.",
-                        linked_incident_id=incident.id,
-                        linked_mission_patch_id=existing_patch.id,
-                    )
+                await _sync_detector_patch_statuses(session, findings, severity, incident.id, existing_patch.id)
             await session.commit()
             if updated_patch is not None:
                 await session.refresh(updated_patch)
@@ -214,17 +227,7 @@ async def build_commander_patch() -> MissionPatch | None:
             linked_incident_id=incident.id,
             linked_mission_patch_id=patch.id,
         )
-        for agent_name in sorted({finding.agent_name for finding in findings}):
-            await emit_agent_status(
-                session,
-                agent_name=agent_name,
-                status="awaiting_approval",
-                phase="approve",
-                severity=severity,
-                message="Related recommendation is waiting for Mission Patch approval.",
-                linked_incident_id=incident.id,
-                linked_mission_patch_id=patch.id,
-            )
+        await _sync_detector_patch_statuses(session, findings, severity, incident.id, patch.id)
         created_patch = True
         await session.commit()
         await session.refresh(patch)
@@ -239,16 +242,75 @@ async def _current_world_state(session) -> WorldStateCurrent | None:
     return result.scalar_one_or_none()
 
 
-async def _open_findings(session) -> list[AgentFinding]:
+async def _open_findings(session, finding_ids: Sequence[str] | None = None) -> list[AgentFinding]:
+    if finding_ids is not None and not finding_ids:
+        return []
+    stmt = select(AgentFinding).where(
+        AgentFinding.scenario_run_id == DEMO_SCENARIO_RUN_ID,
+        AgentFinding.status == "open",
+    )
+    if finding_ids is not None:
+        stmt = stmt.where(AgentFinding.id.in_(finding_ids))
+    result = await session.execute(stmt.order_by(AgentFinding.created_at.asc()))
+    return list(result.scalars().all())
+
+
+async def _retire_superseded_open_findings(session, findings: list[AgentFinding]) -> None:
+    current_ids = {finding.id for finding in findings}
+    current_signatures = {(finding.agent_name, finding.finding_signature) for finding in findings}
+    if not current_ids or not current_signatures:
+        return
+
     result = await session.execute(
-        select(AgentFinding)
-        .where(
+        select(AgentFinding).where(
             AgentFinding.scenario_run_id == DEMO_SCENARIO_RUN_ID,
             AgentFinding.status == "open",
+            AgentFinding.id.notin_(current_ids),
         )
-        .order_by(AgentFinding.created_at.asc())
     )
-    return list(result.scalars().all())
+    for row in result.scalars().all():
+        if (row.agent_name, row.finding_signature) not in current_signatures:
+            continue
+        row.status = "resolved"
+
+
+async def _sync_detector_patch_statuses(
+    session,
+    findings: list[AgentFinding],
+    severity: str,
+    incident_id: str,
+    patch_id: str,
+) -> None:
+    included_agent_names = {finding.agent_name for finding in findings}
+    stale_result = await session.execute(
+        select(AgentStatus).where(
+            AgentStatus.agent != "commander_agent",
+            AgentStatus.status.in_(["awaiting_approval", "included_in_patch"]),
+        )
+    )
+    for row in stale_result.scalars().all():
+        if row.agent in included_agent_names:
+            continue
+        await emit_agent_status(
+            session,
+            agent_name=row.agent,
+            status="monitoring",
+            phase="monitor",
+            severity="INFO",
+            message="Monitoring assigned domain; current Mission Patch is scoped to another detector.",
+        )
+
+    for agent_name in sorted(included_agent_names):
+        await emit_agent_status(
+            session,
+            agent_name=agent_name,
+            status="included_in_patch",
+            phase="handoff",
+            severity=severity,
+            message="Finding included in pending Mission Patch.",
+            linked_incident_id=incident_id,
+            linked_mission_patch_id=patch_id,
+        )
 
 
 async def _get_or_create_incident(session, findings: list[AgentFinding], severity: str, status: str) -> Incident:
@@ -283,14 +345,20 @@ async def _get_or_create_incident(session, findings: list[AgentFinding], severit
 
 
 async def _active_patch_for_incident(session, incident_id: str) -> MissionPatch | None:
+    # "verified" is deliberately excluded: a verified patch is finished work, and
+    # new findings on the (single, reused) demo incident need a fresh patch.
+    # Including it left agents stuck in "proposing" after any post-verification
+    # re-detection, because no new patch could ever be created.
     result = await session.execute(
-        select(MissionPatch).where(
+        select(MissionPatch)
+        .where(
             MissionPatch.scenario_run_id == DEMO_SCENARIO_RUN_ID,
             MissionPatch.incident_id == incident_id,
-            MissionPatch.status.in_(["pending_approval", "approved", "executing", "verified"]),
+            MissionPatch.status.in_(["pending_approval", "approved", "executing"]),
         )
+        .order_by(MissionPatch.created_at.desc())
     )
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def _record_blocked_commander_status(session, safety: SafetyResult) -> None:

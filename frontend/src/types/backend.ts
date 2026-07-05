@@ -34,6 +34,10 @@ export interface ThermalVisualInput {
   notes?: string | null;
   received_at: string;
   image_data_url: string;
+  audio_data_url?: string | null;
+  audio_mime_type?: string | null;
+  audio_duration_s?: number | null;
+  audio_notes?: string | null;
   analysis_status: string;
   model_result?: ThermalModelResult | null;
 }
@@ -164,11 +168,20 @@ export interface RadiationRiskResponse {
   radiationRisk: ProcessedRadiationRisk;
 }
 
+export interface DownlinkPendingRequest {
+  id: string;
+  requested_by: string;
+  description: string;
+  size_gb: number;
+  priority: string;
+}
+
 export interface DownlinkState {
   window_open: boolean;
   capacity_gb: number;
   used_gb: number;
   time_remaining_min: number;
+  pending_request?: DownlinkPendingRequest | null;
 }
 
 export interface TrainingState {
@@ -274,6 +287,8 @@ export interface ChatContextSummary {
   world_version: number | null;
   agent_count: number;
   open_findings: number;
+  incident_count: number;
+  mission_patch_count: number;
   command_count: number;
   queued_commands: number;
   running_commands: number;
@@ -364,6 +379,10 @@ export interface CommandsResponse {
 
 export interface SimulatorInjectRequest {
   image_data_url?: string | null;
+  audio_data_url?: string | null;
+  audio_mime_type?: string | null;
+  audio_duration_s?: number | null;
+  audio_notes?: string | null;
   asset_id?: string;
   source?: string;
   notes?: string | null;
@@ -375,6 +394,7 @@ export interface SimulatorInjectResponse {
   world_state_version: number;
   finding_ids: string[];
   image_id?: string | null;
+  audio_id?: string | null;
   mission_patch_id?: string | null;
   analysis_status?: string | null;
   model_result?: ThermalModelResult | null;

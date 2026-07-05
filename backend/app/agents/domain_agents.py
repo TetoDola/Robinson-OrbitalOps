@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -84,7 +85,66 @@ def build_radiation_finding(state: dict[str, Any]) -> dict[str, Any] | None:
     )
 
 
+# One usable ground-contact window per orbit at demo LEO altitude.
+DOWNLINK_ORBIT_PERIOD_MIN = 92.5
+# Fraction of a contact window's capacity a chunk may use; the rest is margin
+# for link degradation, retransmits, and protocol overhead.
+DOWNLINK_SAFE_WINDOW_FRACTION = 0.85
+
+
+def plan_downlink_chunks(downlink: dict[str, Any]) -> dict[str, Any] | None:
+    """Chunk a pending bulk-data request into safe per-window transfers.
+
+    Returns None when there is no pending request or no usable window capacity.
+    """
+    request = downlink.get("pending_request") or {}
+    request_gb = _number(request.get("size_gb"))
+    capacity_gb = _number(downlink.get("capacity_gb")) or 0
+    if not request_gb or request_gb <= 0 or capacity_gb <= 0:
+        return None
+
+    chunk_gb = max(1, math.floor(capacity_gb * DOWNLINK_SAFE_WINDOW_FRACTION))
+    chunk_count = math.ceil(request_gb / chunk_gb)
+    orbits_needed = chunk_count  # one contact window per orbit
+    total_minutes = orbits_needed * DOWNLINK_ORBIT_PERIOD_MIN
+    return {
+        "request_id": request.get("id"),
+        "request_description": request.get("description"),
+        "request_gb": request_gb,
+        "window_capacity_gb": capacity_gb,
+        "chunk_gb": chunk_gb,
+        "chunk_count": chunk_count,
+        "orbits_needed": orbits_needed,
+        "estimated_hours": round(total_minutes / 60, 1),
+        "estimated_days": round(total_minutes / 1440, 1),
+    }
+
+
 def build_checkpoint_downlink_finding(state: dict[str, Any]) -> dict[str, Any] | None:
+    downlink = state["downlink"]
+    plan = plan_downlink_chunks(downlink)
+    if plan is not None and plan["request_gb"] > plan["window_capacity_gb"]:
+        request_tb = plan["request_gb"] / 1024
+        description = plan["request_description"] or "bulk model data"
+        return _finding(
+            "checkpoint_downlink_agent",
+            "YELLOW",
+            0.84,
+            [asset for asset in (plan["request_id"], "ground-link") if asset],
+            f"{request_tb:.1f} TB data request exceeds single-window capacity; chunked transfer plan prepared.",
+            [
+                f"Ground requested {request_tb:.1f} TB ({plan['request_gb']:.0f} GB) of {description}",
+                f"Contact window capacity is {plan['window_capacity_gb']:.0f} GB; safe chunk size with "
+                f"{round((1 - DOWNLINK_SAFE_WINDOW_FRACTION) * 100)}% link margin is {plan['chunk_gb']} GB",
+                f"Transfer needs {plan['chunk_count']} chunks at one contact window per orbit -> {plan['orbits_needed']} orbits",
+                f"Orbit period ~{DOWNLINK_ORBIT_PERIOD_MIN:g} min -> estimated completion in ~{plan['estimated_days']} days "
+                f"({plan['estimated_hours']} hours) of chunked downlink",
+            ],
+            "Sending oversized transfers risks window overrun and corrupted partial chunks; "
+            "the request must be chunked and scheduled across contact windows.",
+            ["transfer_priority"],
+            "downlink_chunked_transfer_plan",
+        )
     if state["downlink"]["capacity_gb"] < 180:
         return _finding(
             "checkpoint_downlink_agent",
@@ -296,6 +356,8 @@ async def _persist_finding(payload: dict[str, Any]) -> AgentFinding | None:
     async with session_context() as session:
         existing = await find_existing_open_finding(session, payload)
         if existing is not None:
+            await _emit_duplicate_suppressed_in_session(session, payload["agent_name"], payload, existing)
+            await session.commit()
             return None
         await emit_agent_status(
             session,
@@ -310,6 +372,8 @@ async def _persist_finding(payload: dict[str, Any]) -> AgentFinding | None:
     async with session_context() as session:
         existing = await find_existing_open_finding(session, payload)
         if existing is not None:
+            await _emit_duplicate_suppressed_in_session(session, payload["agent_name"], payload, existing)
+            await session.commit()
             return None
         finding = AgentFinding(scenario_run_id=DEMO_SCENARIO_RUN_ID, status="open", **payload)
         session.add(finding)
@@ -317,6 +381,10 @@ async def _persist_finding(payload: dict[str, Any]) -> AgentFinding | None:
             await session.commit()
         except IntegrityError:
             await session.rollback()
+            existing = await find_existing_open_finding(session, payload)
+            if existing is not None:
+                await _emit_duplicate_suppressed_in_session(session, payload["agent_name"], payload, existing)
+                await session.commit()
             return None
         await session.refresh(finding)
 
@@ -357,6 +425,17 @@ async def _existing_finding(payload: dict[str, Any]) -> AgentFinding | None:
 
 
 async def _emit_duplicate_suppressed(agent_name: str, payload: dict[str, Any], existing: AgentFinding) -> None:
+    async with session_context() as session:
+        await _emit_duplicate_suppressed_in_session(session, agent_name, payload, existing)
+        await session.commit()
+
+
+async def _emit_duplicate_suppressed_in_session(
+    session,
+    agent_name: str,
+    payload: dict[str, Any],
+    existing: AgentFinding,
+) -> None:
     if existing.status == "open":
         status, phase, severity = "proposing", "propose", payload["severity"]
         message = "Finding already reported; awaiting Commander grouping and approval outcome."
@@ -366,17 +445,15 @@ async def _emit_duplicate_suppressed(agent_name: str, payload: dict[str, Any], e
     else:
         status, phase, severity = "monitoring", "monitor", "INFO"
         message = "Previously reported finding was resolved; monitoring for new changes."
-    async with session_context() as session:
-        await emit_agent_status(
-            session,
-            agent_name=agent_name,
-            status=status,
-            phase=phase,
-            severity=severity,
-            message=message,
-            linked_finding_id=existing.id,
-        )
-        await session.commit()
+    await emit_agent_status(
+        session,
+        agent_name=agent_name,
+        status=status,
+        phase=phase,
+        severity=severity,
+        message=message,
+        linked_finding_id=existing.id,
+    )
 
 
 async def _publish_finding(finding: AgentFinding, payload: dict[str, Any]) -> None:

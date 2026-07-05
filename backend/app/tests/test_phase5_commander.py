@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 import inspect
 
@@ -100,3 +101,20 @@ def test_commander_sets_pending_approval_only_after_safety_validation() -> None:
     source = inspect.getsource(commander_agent.build_commander_patch)
 
     assert source.index("validate_mission_patch") < source.index('incident.status = "pending_approval"')
+
+
+def test_commander_keeps_approval_status_patch_owned() -> None:
+    source = inspect.getsource(commander_agent.build_commander_patch)
+    included_source = inspect.getsource(commander_agent._sync_detector_patch_statuses)
+
+    assert "Related recommendation is waiting for Mission Patch approval." not in source
+    assert 'status="included_in_patch"' in included_source
+    assert 'status="monitoring"' in included_source
+
+
+def test_open_findings_can_be_scoped_to_no_manual_findings() -> None:
+    class NoExecuteSession:
+        async def execute(self, _statement):
+            raise AssertionError("empty manual finding scope should not query all open findings")
+
+    assert asyncio.run(commander_agent._open_findings(NoExecuteSession(), finding_ids=[])) == []

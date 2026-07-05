@@ -73,6 +73,31 @@ export interface WorkflowEventItem {
   status: "running" | "complete" | "blocked" | "info";
 }
 
+export type CoolingTrendStatus = "idle" | "activating" | "active" | "settled" | "failed" | "off";
+
+export interface CoolingTrendSample {
+  time: string;
+  tempC: number;
+  fanPct: number;
+}
+
+export interface CoolingTrendState {
+  status: CoolingTrendStatus;
+  message: string;
+  baselineTempC: number;
+  targetTempC: number;
+  samples: CoolingTrendSample[];
+  startedAt: string | null;
+  updatedAt: string | null;
+}
+
+interface CoolingTrendStart {
+  baselineTempC: number;
+  targetTempC: number;
+  message: string;
+  status?: Extract<CoolingTrendStatus, "activating" | "active">;
+}
+
 export interface AgentLogItem {
   id: string;
   agent: string;
@@ -95,6 +120,7 @@ interface WorldStore {
   agentRuntime: AgentRuntimeItem[];
   aiStatus: AiStatusResponse | null;
   workflowEvents: WorkflowEventItem[];
+  coolingTrend: CoolingTrendState;
   agentLogs: Record<string, AgentLogItem[]>;
   agentFindings: AgentFinding[];
   incidents: Incident[];
@@ -117,6 +143,10 @@ interface WorldStore {
   upsertAgentRuntime: (agent: AgentRuntimeItem) => void;
   setAiStatus: (aiStatus: AiStatusResponse | null) => void;
   pushWorkflowEvent: (event: WorkflowEventItem) => void;
+  startCoolingTrend: (session: CoolingTrendStart) => void;
+  appendCoolingTrendSample: (sample: CoolingTrendSample) => void;
+  setCoolingTrendStatus: (status: CoolingTrendStatus, message: string) => void;
+  resetCoolingTrend: () => void;
   pushAgentLog: (event: AgentLogItem) => void;
   setAgentFindings: (findings: AgentFinding[]) => void;
   upsertAgentFinding: (finding: AgentFinding) => void;
@@ -143,6 +173,7 @@ export const useWorldStore = create<WorldStore>()(
     agentRuntime: [],
     aiStatus: null,
     workflowEvents: [],
+    coolingTrend: createInitialCoolingTrend(),
     agentLogs: {},
     agentFindings: [],
     incidents: [],
@@ -180,6 +211,40 @@ export const useWorldStore = create<WorldStore>()(
     setAiStatus: (aiStatus) => set({ aiStatus }),
     pushWorkflowEvent: (event) =>
       set((state) => ({ workflowEvents: [event, ...state.workflowEvents].slice(0, 12) })),
+    startCoolingTrend: ({ baselineTempC, targetTempC, message, status = "activating" }) =>
+      set(() => {
+        const now = new Date().toISOString();
+        const baseline = roundTemp(baselineTempC);
+        return {
+          coolingTrend: {
+            status,
+            message,
+            baselineTempC: baseline,
+            targetTempC: roundTemp(targetTempC),
+            samples: [{ time: now, tempC: baseline, fanPct: 100 }],
+            startedAt: now,
+            updatedAt: now,
+          },
+        };
+      }),
+    appendCoolingTrendSample: (sample) =>
+      set((state) => ({
+        coolingTrend: {
+          ...state.coolingTrend,
+          samples: [...state.coolingTrend.samples, { ...sample, tempC: roundTemp(sample.tempC) }].slice(-18),
+          updatedAt: sample.time,
+        },
+      })),
+    setCoolingTrendStatus: (status, message) =>
+      set((state) => ({
+        coolingTrend: {
+          ...state.coolingTrend,
+          status,
+          message,
+          updatedAt: new Date().toISOString(),
+        },
+      })),
+    resetCoolingTrend: () => set({ coolingTrend: createInitialCoolingTrend() }),
     pushAgentLog: (event) =>
       set((state) => ({ agentLogs: appendAgentLogItem(state.agentLogs, event) })),
     setAgentFindings: (agentFindings) =>
@@ -332,8 +397,8 @@ export const useWorldStore = create<WorldStore>()(
             patchAgents,
             isUpdatedPatch ? "Patch evidence refreshed" : "Patch handoff",
             isUpdatedPatch
-              ? "Commander refreshed the approval package with current agent evidence."
-              : "Commander included this agent report in the approval package.",
+              ? "Mission Patch refreshed with current detector evidence."
+              : "Mission Patch included this detector report in the approval package.",
             "running",
             { dedupeKey: `${event.type}:${payload.id}:handoff`, missionPatchId: payload.id },
           );
@@ -371,6 +436,7 @@ export const useWorldStore = create<WorldStore>()(
             missionPatch: null,
             commands: [],
             workflowEvents: workflowEntry([], event, "Reset baseline", "All agents monitoring", "complete"),
+            coolingTrend: createInitialCoolingTrend(),
             agentLogs: resetAgentLogs(event, state.agents),
             patchMode: "pending",
             lastEvent: event,
@@ -665,6 +731,22 @@ function workflowEntry(
     },
     ...existing.filter((item) => item.id !== id),
   ].slice(0, 12);
+}
+
+function createInitialCoolingTrend(): CoolingTrendState {
+  return {
+    status: "idle",
+    message: "Cooling system standby",
+    baselineTempC: 0,
+    targetTempC: 0,
+    samples: [],
+    startedAt: null,
+    updatedAt: null,
+  };
+}
+
+function roundTemp(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function agentEventStatus(agent: AgentStatusItem): WorkflowEventItem["status"] {

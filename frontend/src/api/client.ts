@@ -83,28 +83,73 @@ export function getActiveMissionPatch(): Promise<ActiveMissionPatchResponse> {
   return fetchJson<ActiveMissionPatchResponse>("/mission-patches/active");
 }
 
-export async function approveMissionPatch(patchId: string): Promise<MissionPatch> {
-  const response = await fetchJson<{ mission_patch: MissionPatch }>(`/mission-patches/${patchId}/approve`, {
-    method: "POST",
-    body: JSON.stringify({
-      operator_id: "demo-operator",
-      operator_note: "Approved from OrbitOps frontend",
-    }),
-  });
-
-  return response.mission_patch;
+export interface LocalToolCall {
+  tool: string;
+  action: string;
+  command?: string;
+  reason?: string;
 }
 
-export async function rejectMissionPatch(patchId: string): Promise<MissionPatch> {
-  const response = await fetchJson<{ mission_patch: MissionPatch }>(`/mission-patches/${patchId}/reject`, {
-    method: "POST",
-    body: JSON.stringify({
-      operator_id: "demo-operator",
-      operator_note: "Rejected from OrbitOps frontend",
-    }),
-  });
+export interface LocalToolResult {
+  ok: boolean;
+  action?: string;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+}
 
-  return response.mission_patch;
+export interface MissionPatchDecision {
+  patch: MissionPatch;
+  localToolCalls: LocalToolCall[];
+}
+
+export async function approveMissionPatch(patchId: string): Promise<MissionPatchDecision> {
+  const response = await fetchJson<{ mission_patch: MissionPatch; local_tool_calls?: LocalToolCall[] }>(
+    `/mission-patches/${patchId}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        operator_id: "demo-operator",
+        operator_note: "Approved from OrbitOps frontend",
+      }),
+    },
+  );
+
+  return { patch: response.mission_patch, localToolCalls: response.local_tool_calls ?? [] };
+}
+
+export async function rejectMissionPatch(patchId: string): Promise<MissionPatchDecision> {
+  const response = await fetchJson<{ mission_patch: MissionPatch; local_tool_calls?: LocalToolCall[] }>(
+    `/mission-patches/${patchId}/reject`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        operator_id: "demo-operator",
+        operator_note: "Rejected from OrbitOps frontend",
+      }),
+    },
+  );
+
+  return { patch: response.mission_patch, localToolCalls: response.local_tool_calls ?? [] };
+}
+
+// Local tool calls run on the operator's machine via the Vite dev-server
+// endpoint (see localCoolerBoostPlugin in vite.config.ts) because the
+// containerized backend cannot touch demo hardware.
+export async function runLocalToolCall(call: LocalToolCall): Promise<LocalToolResult> {
+  if (call.tool !== "cooler_boost") {
+    return { ok: false, error: `Unknown local tool: ${call.tool}` };
+  }
+  try {
+    const response = await fetch("/__local/cooler-boost", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: call.action }),
+    });
+    return (await response.json()) as LocalToolResult;
+  } catch {
+    return { ok: false, error: "Local tool endpoint unreachable (only available under the Vite dev server)." };
+  }
 }
 
 export function injectSimulatorIssue(issue: string, payload: SimulatorInjectRequest = {}): Promise<SimulatorInjectResponse> {
