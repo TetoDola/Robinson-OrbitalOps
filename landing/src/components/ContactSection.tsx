@@ -65,14 +65,14 @@ export function ContactSection() {
           </ul>
 
           <div className="mt-12">
-            <p className="eyebrow text-[var(--c-dark-gray)]">Trusted by the people building the orbital era.</p>
-            <div className="mt-5 opacity-60">
+            <p className="eyebrow text-[var(--c-dark-gray)]">Powered by</p>
+            <div className="mt-5">
               <Image
-                src="/images/investors/logo-stripe.png"
-                alt="Trusted brands"
-                width={565}
-                height={70}
-                className="h-auto w-full max-w-md object-contain"
+                src="/images/crusoe.webp"
+                alt="Crusoe"
+                width={635}
+                height={157}
+                className="h-9 w-auto object-contain"
               />
             </div>
           </div>
