@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -283,3 +283,100 @@ class DashboardState(BaseModel):
     satellite_topology: SatelliteTopology
     downlink_queue: list[dict[str, Any]]
     overall_risk: Severity
+
+
+Modality = Literal["telemetry", "log", "image", "topology", "report", "calculation", "thermal", "operator_message"]
+AgentSource = Literal["local", "crusoe", "fallback"]
+
+
+class MultimodalObservation(BaseModel):
+    observation_id: str = Field(default_factory=lambda: f"OBS-{str(uuid4())[:8].upper()}")
+    timestamp: str = Field(default_factory=utc_now)
+    modality: Modality
+    summary: str
+    content: str | dict[str, Any] | None = None
+    mime_type: str | None = None
+    uri: str | None = None
+
+
+class OperatorFeedback(BaseModel):
+    feedback_id: str = Field(default_factory=lambda: f"FDBK-{str(uuid4())[:8].upper()}")
+    timestamp: str = Field(default_factory=utc_now)
+    message: str
+    accepted_action_ids: list[str] = Field(default_factory=list)
+    rejected_action_ids: list[str] = Field(default_factory=list)
+    risk_tolerance: Literal["conservative", "balanced", "aggressive"] = "balanced"
+    policy_notes: list[str] = Field(default_factory=list)
+
+
+class RandomSimulationConfig(BaseModel):
+    seed: int | None = None
+    scenario: Literal[
+        "mixed",
+        "nominal",
+        "thermal_ramp",
+        "radiation_pass",
+        "downlink_congestion",
+        "scheduler_mismatch",
+        "power_eclipse",
+    ] = "mixed"
+    intensity: float = Field(default=0.72, ge=0, le=1)
+    noise: float = Field(default=0.18, ge=0, le=1)
+    step_minutes: int = Field(default=5, ge=1, le=30)
+    start_elapsed_minutes: int | None = Field(default=None, ge=0)
+    auto_advance: bool = True
+
+
+class PredictiveAgentRequest(BaseModel):
+    message: str | None = None
+    observations: list[MultimodalObservation] = Field(default_factory=list)
+    feedback: OperatorFeedback | None = None
+    force_crusoe: bool = False
+
+
+class ActionApprovalRequest(BaseModel):
+    action_id: str
+    decision: Literal["approved", "rejected"]
+    notes: str | None = None
+
+
+class AgentTrainingExample(BaseModel):
+    example_id: str = Field(default_factory=lambda: f"TRN-{str(uuid4())[:8].upper()}")
+    timestamp: str = Field(default_factory=utc_now)
+    input_summary: dict[str, Any]
+    expected_output: dict[str, Any]
+    label_source: Literal["simulation", "operator", "incident_replay"] = "simulation"
+
+
+class PredictiveAgentResult(BaseModel):
+    result_id: str = Field(default_factory=lambda: f"PRED-{str(uuid4())[:8].upper()}")
+    timestamp: str = Field(default_factory=utc_now)
+    source: AgentSource
+    model: str
+    mission_id: str
+    mode: Literal["stream", "deep_analysis", "chat"] = "stream"
+    multimodal_inputs: list[MultimodalObservation] = Field(default_factory=list)
+    overall_risk_score: float = Field(ge=0, le=100)
+    severity: Severity
+    primary_driver: str
+    predicted_event: str
+    eta_minutes: float | None = None
+    confidence: float = Field(ge=0, le=1)
+    evidence: list[str] = Field(default_factory=list)
+    reasoning_trace: list[str] = Field(default_factory=list)
+    recommended_actions: list[dict[str, Any]] = Field(default_factory=list)
+    operator_questions: list[str] = Field(default_factory=list)
+    adaptation_notes: list[str] = Field(default_factory=list)
+    module_results: list[dict[str, Any]] = Field(default_factory=list)
+    performance_metrics: dict[str, Any] = Field(default_factory=dict)
+    response_text: str | None = None
+
+
+class AgentMemoryState(BaseModel):
+    feedback_count: int = 0
+    risk_tolerance: Literal["conservative", "balanced", "aggressive"] = "balanced"
+    policy_notes: list[str] = Field(default_factory=list)
+    accepted_action_ids: list[str] = Field(default_factory=list)
+    rejected_action_ids: list[str] = Field(default_factory=list)
+    recent_predictions: list[PredictiveAgentResult] = Field(default_factory=list)
+    training_examples: list[AgentTrainingExample] = Field(default_factory=list)

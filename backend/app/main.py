@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import routes_agents, routes_incidents, routes_patches, routes_science, routes_telemetry
+from .api import routes_agents, routes_incidents, routes_patches, routes_science, routes_simulation, routes_telemetry
 from .database import OrbitOpsDatabase
 from .models import SEVERITY_RANK, Severity
 from .services.patch_service import PatchService
@@ -43,6 +43,7 @@ app.include_router(routes_agents.router)
 app.include_router(routes_incidents.router)
 app.include_router(routes_patches.router)
 app.include_router(routes_science.router)
+app.include_router(routes_simulation.router)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..agents.multimodal_predictive_agent import MultimodalPredictiveAgent
 from ..agents.checkpoint_downlink_agent import CheckpointDownlinkRecoveryAgent
 from ..agents.orbit_power_agent import OrbitPowerAgent
 from ..agents.radiation_integrity_agent import RadiationIntegrityAgent
@@ -7,15 +8,23 @@ from ..agents.thermal_health_agent import ThermalHealthAgent
 from ..agents.workload_gpu_agent import WorkloadGpuAgent
 from ..database import OrbitOpsDatabase
 from ..models import (
+    ActionApprovalRequest,
     AgentFinding,
+    AgentMemoryState,
     ComputeNodeStatus,
     DashboardState,
     GpuStatus,
+    MultimodalObservation,
+    OperatorFeedback,
+    PredictiveAgentRequest,
+    PredictiveAgentResult,
+    RandomSimulationConfig,
     SatelliteTopology,
     SEVERITY_RANK,
     Severity,
     TelemetrySnapshot,
 )
+from ..simulator.random_stream import RandomTelemetryGenerator
 from ..simulator.telemetry_simulator import TelemetrySimulator
 from ..science.calculation_modules import ScientificPredictionEngine
 from ..science.types import ScientificAssessment
@@ -35,14 +44,20 @@ class TelemetryService:
         ]
         self.incident_service = IncidentService(database)
         self.science_engine = ScientificPredictionEngine()
+        self.predictive_agent = MultimodalPredictiveAgent()
+        self.random_generator: RandomTelemetryGenerator | None = None
         self._last_findings: list[AgentFinding] = []
         self._record_snapshot(self.simulator.latest())
         self.run_agents()
 
     def latest(self) -> TelemetrySnapshot:
+        if self.random_generator is not None:
+            return self.random_generator.latest()
         return self.simulator.latest()
 
     def history(self) -> list[TelemetrySnapshot]:
+        if self.random_generator is not None:
+            return self.random_generator.history()
         return self.simulator.history()
 
     def sql_history(self, limit: int = 96) -> list[TelemetrySnapshot]:
@@ -56,22 +71,36 @@ class TelemetryService:
         return snapshots
 
     def start(self) -> TelemetrySnapshot:
+        if self.random_generator is not None:
+            snapshot = self.random_generator.start()
+            self._record_snapshot(snapshot)
+            self.run_agents()
+            return snapshot
         snapshot = self.simulator.start()
         self._record_snapshot(snapshot)
         self.run_agents()
         return snapshot
 
     def stop(self) -> TelemetrySnapshot:
+        if self.random_generator is not None:
+            return self.random_generator.stop()
         return self.simulator.stop()
 
     def reset(self) -> TelemetrySnapshot:
         self.database.reset_demo()
+        self.random_generator = None
         snapshot = self.simulator.reset()
         self._record_snapshot(snapshot)
         self.run_agents()
         return snapshot
 
     def advance_if_running(self) -> TelemetrySnapshot:
+        if self.random_generator is not None:
+            if self.random_generator.running:
+                snapshot = self.random_generator.advance()
+                self._record_snapshot(snapshot)
+                self.run_agents()
+            return self.random_generator.latest()
         if self.simulator.running:
             snapshot = self.simulator.advance()
             self._record_snapshot(snapshot)
@@ -79,6 +108,11 @@ class TelemetryService:
         return self.simulator.latest()
 
     def step(self) -> TelemetrySnapshot:
+        if self.random_generator is not None:
+            snapshot = self.random_generator.advance()
+            self._record_snapshot(snapshot)
+            self.run_agents()
+            return snapshot
         snapshot = self.simulator.advance()
         self._record_snapshot(snapshot)
         self.run_agents()
@@ -135,6 +169,12 @@ class TelemetryService:
         return queue
 
     def scientific_assessment(self) -> ScientificAssessment:
+        if self.random_generator is not None:
+            return self.science_engine.assess(
+                self.random_generator.latest(),
+                self.random_generator.elapsed_minutes,
+                self.random_generator.history(),
+            )
         sql_history = self.sql_history()
         latest = sql_history[-1] if sql_history else self.latest()
         return self.science_engine.assess(latest, self.simulator.elapsed_minutes, sql_history or self.history())
@@ -251,20 +291,21 @@ class TelemetryService:
     def dashboard_state(self, latest_patch=None) -> DashboardState:
         findings = self.findings()
         incidents = self.incident_service.list_incidents()
+        runtime = self.random_generator if self.random_generator is not None else self.simulator
         return DashboardState(
             latest_snapshot=self.latest(),
             history=self.history(),
             findings=findings,
             incidents=incidents,
             latest_patch=latest_patch,
-            simulator_running=self.simulator.running,
-            timeline_step=self.simulator.index,
-            simulated_elapsed_minutes=self.simulator.elapsed_minutes,
-            mission_clock=self.simulator.mission_clock,
-            orbit_number=self.simulator.orbit_number,
-            orbit_fraction=self.simulator.orbit_fraction,
+            simulator_running=runtime.running,
+            timeline_step=runtime.index,
+            simulated_elapsed_minutes=runtime.elapsed_minutes,
+            mission_clock=runtime.mission_clock,
+            orbit_number=runtime.orbit_number,
+            orbit_fraction=runtime.orbit_fraction,
             simulation_speed="1 live tick = 15 simulated minutes; full 24h pass = 96 ticks",
-            calculation_notes=self.simulator.notes(),
+            calculation_notes=runtime.notes(),
             satellite_topology=self.satellite_topology(),
             downlink_queue=self.downlink_queue(),
             overall_risk=self.highest_severity(),
@@ -276,3 +317,94 @@ class TelemetryService:
             snapshot,
             {"created_at": snapshot.timestamp, "mission_id": snapshot.mission_id},
         )
+
+    def start_random_simulation(self, config: RandomSimulationConfig) -> dict:
+        self.random_generator = RandomTelemetryGenerator(config)
+        self._record_snapshot(self.random_generator.latest())
+        self.run_agents()
+        return self.random_simulation_status()
+
+    def stop_random_simulation(self) -> dict:
+        if self.random_generator is not None:
+            self.random_generator.stop()
+        return self.random_simulation_status()
+
+    def random_simulation_status(self) -> dict:
+        if self.random_generator is None:
+            return {"active": False}
+        latest = self.random_generator.latest()
+        return {
+            "active": True,
+            "running": self.random_generator.running,
+            "seed": self.random_generator.seed,
+            "scenario": self.random_generator.config.scenario,
+            "intensity": self.random_generator.config.intensity,
+            "noise": self.random_generator.config.noise,
+            "step_minutes": self.random_generator.config.step_minutes,
+            "tick": self.random_generator.index,
+            "elapsed_minutes": self.random_generator.elapsed_minutes,
+            "latest_timestamp": latest.timestamp,
+        }
+
+    def predictive_stream_result(
+        self,
+        observations: list[MultimodalObservation] | None = None,
+    ) -> PredictiveAgentResult:
+        assessment = self.scientific_assessment()
+        return self.predictive_agent.analyze_stream(self.latest(), self.history(), assessment, observations)
+
+    async def predictive_deep_analysis(self, payload: PredictiveAgentRequest) -> PredictiveAgentResult:
+        if payload.feedback is not None:
+            self.predictive_agent.record_feedback(payload.feedback)
+        assessment = self.scientific_assessment()
+        return await self.predictive_agent.analyze_deep(
+            self.latest(),
+            self.history(),
+            assessment,
+            observations=payload.observations,
+            message=payload.message,
+            force_crusoe=payload.force_crusoe,
+        )
+
+    async def predictive_chat(self, payload: PredictiveAgentRequest) -> PredictiveAgentResult:
+        if payload.feedback is not None:
+            self.predictive_agent.record_feedback(payload.feedback)
+        assessment = self.scientific_assessment()
+        return await self.predictive_agent.answer_chat(
+            payload.message or "Summarize current mission risk.",
+            self.latest(),
+            self.history(),
+            assessment,
+            observations=payload.observations,
+            force_crusoe=payload.force_crusoe,
+        )
+
+    def record_operator_feedback(self, feedback: OperatorFeedback) -> AgentMemoryState:
+        return self.predictive_agent.record_feedback(feedback)
+
+    def agent_memory(self) -> AgentMemoryState:
+        return self.predictive_agent.memory
+
+    def nemotron_training_pack(self) -> dict:
+        assessment = self.scientific_assessment()
+        return self.predictive_agent.build_nemotron_training_pack(self.latest(), self.history(), assessment)
+
+    def decide_recommended_action(self, payload: ActionApprovalRequest) -> dict:
+        accepted = [payload.action_id] if payload.decision == "approved" else []
+        rejected = [payload.action_id] if payload.decision == "rejected" else []
+        notes = [payload.notes] if payload.notes else []
+        memory = self.predictive_agent.record_feedback(
+            OperatorFeedback(
+                message=f"Operator {payload.decision} recommended action {payload.action_id}.",
+                accepted_action_ids=accepted,
+                rejected_action_ids=rejected,
+                policy_notes=notes,
+            )
+        )
+        prediction = self.predictive_stream_result()
+        return {
+            "action_id": payload.action_id,
+            "decision": payload.decision,
+            "memory": memory,
+            "prediction": prediction,
+        }

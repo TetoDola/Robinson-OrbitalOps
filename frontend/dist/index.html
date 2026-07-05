@@ -1,0 +1,2287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OrbitOps Predictive Console</title>
+  <style>
+    :root {
+      --bg: #101010;
+      --panel: rgba(35, 35, 35, 0.72);
+      --panel-strong: rgba(24, 24, 24, 0.94);
+      --ink: #f7f4ef;
+      --muted: #aaa7a0;
+      --line: rgba(255, 255, 255, 0.12);
+      --green: #46c887;
+      --blue: #36a6ff;
+      --amber: #ff8a24;
+      --red: #ff4f3d;
+      --violet: #b487ff;
+      --orange: #ff541b;
+      --ops-gold: #d8bd72;
+      --live: #8dffbd;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.50);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(130deg, rgba(255, 84, 27, 0.13) 0%, transparent 28%),
+        linear-gradient(220deg, rgba(54, 166, 255, 0.08) 0%, transparent 34%),
+        linear-gradient(145deg, #0d0d0d 0%, #191817 52%, #0e0e0e 100%);
+      color: var(--ink);
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.34;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+      background-size: 58px 58px;
+    }
+
+    @keyframes ledPulse {
+      0%, 100% { transform: scale(1); opacity: 0.7; }
+      50% { transform: scale(1.35); opacity: 1; }
+    }
+
+    @keyframes scan {
+      0% { transform: translateX(-100%); width: 22%; }
+      50% { width: 48%; }
+      100% { transform: translateX(430%); width: 22%; }
+    }
+
+    @keyframes flowDash {
+      to { stroke-dashoffset: -120; }
+    }
+
+    @keyframes coreBreath {
+      0%, 100% { filter: drop-shadow(0 16px 34px rgba(255,84,27,0.30)); transform: scale(1); }
+      50% { filter: drop-shadow(0 24px 54px rgba(255,138,36,0.44)); transform: scale(1.018); }
+    }
+
+    @keyframes panelRise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--ink);
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: inset 0 1px rgba(255,255,255,0.08);
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: rgba(255,255,255,0.26);
+      background: rgba(255,255,255,0.10);
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, #ff541b, #ff8a24);
+      color: #fff;
+      border-color: rgba(255, 133, 50, 0.8);
+      box-shadow: 0 10px 32px rgba(255, 84, 27, 0.28);
+    }
+
+    button.active {
+      border-color: rgba(70, 200, 135, 0.55);
+      background: rgba(70, 200, 135, 0.12);
+      color: #c9ffe4;
+    }
+
+    button.warn {
+      background: rgba(255, 84, 27, 0.10);
+      border-color: rgba(255, 84, 27, 0.32);
+      color: #ffd2bf;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    select, input, textarea {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: var(--ink);
+      min-width: 0;
+    }
+
+    select:focus, input:focus, textarea:focus, button:focus-visible {
+      outline: 2px solid rgba(255, 138, 36, 0.42);
+      outline-offset: 2px;
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--muted);
+      min-width: 0;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      min-height: 100vh;
+      position: relative;
+      z-index: 1;
+    }
+
+    .rail {
+      background: rgba(18, 18, 18, 0.78);
+      color: #f7f7f3;
+      padding: 22px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      border-right: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(22px);
+    }
+
+    .brand {
+      display: grid;
+      gap: 4px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.1;
+      font-weight: 800;
+    }
+
+    .brand span {
+      color: #bcbcbc;
+      font-size: 13px;
+    }
+
+    .rail .group {
+      display: grid;
+      gap: 10px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.10);
+    }
+
+    .rail label {
+      color: #adadad;
+    }
+
+    .rail input, .rail select {
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+      border-color: rgba(255,255,255,0.14);
+      width: 100%;
+    }
+
+    .rail button {
+      width: 100%;
+    }
+
+    .source-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(255, 84, 27, 0.14);
+      color: #ffc5ae;
+      font-size: 12px;
+      font-weight: 700;
+      width: fit-content;
+    }
+
+    .nav-tile {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid rgba(216,189,114,0.55);
+      border-radius: 8px;
+      background: rgba(216,189,114,0.08);
+      color: #fff7dc;
+      font-weight: 850;
+    }
+
+    .nav-tile::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--live);
+      box-shadow: 0 0 18px rgba(141,255,189,0.65);
+    }
+
+    .mission-brief {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.045);
+    }
+
+    .mission-brief h3,
+    .agent-rack h3 {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .mission-brief strong {
+      display: block;
+      font-size: 23px;
+      letter-spacing: 0;
+    }
+
+    .mission-clock {
+      padding: 10px 12px;
+      border: 1px solid rgba(216,189,114,0.28);
+      border-radius: 6px;
+      color: #ffdf82;
+      background: rgba(216,189,114,0.08);
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 18px;
+      font-weight: 850;
+    }
+
+    .mission-notes {
+      color: #ded8c8;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .brief-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .brief-stat {
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 7px;
+      padding: 10px;
+      background: rgba(255,255,255,0.04);
+    }
+
+    .brief-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .brief-stat strong {
+      font-size: 18px;
+      line-height: 1.1;
+    }
+
+    .stream-card {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(255,84,27,0.12), transparent 48%),
+        rgba(255,255,255,0.055);
+    }
+
+    .stream-led {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      margin-top: 4px;
+      background: #6c6c6c;
+      box-shadow: 0 0 0 rgba(255,255,255,0);
+    }
+
+    .stream-card.live .stream-led {
+      background: var(--green);
+      animation: ledPulse 1.35s ease-in-out infinite;
+      box-shadow: 0 0 24px rgba(70,200,135,0.55);
+    }
+
+    .stream-card.paused .stream-led {
+      background: var(--amber);
+      box-shadow: 0 0 22px rgba(255,138,36,0.38);
+    }
+
+    .stream-card strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .stream-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      margin-top: 3px;
+    }
+
+    .stream-progress {
+      grid-column: 1 / -1;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.10);
+      overflow: hidden;
+    }
+
+    .stream-progress div {
+      height: 100%;
+      width: 18%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #46c887, #ff8a24);
+      animation: scan 2.4s ease-in-out infinite;
+    }
+
+    .stream-card.paused .stream-progress div,
+    .stream-card.offline .stream-progress div {
+      animation: none;
+      width: 0%;
+    }
+
+    main {
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .topline h2 {
+      margin: 0;
+      font-size: 36px;
+      line-height: 1.2;
+      font-weight: 850;
+    }
+
+    .meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .meta span {
+      padding: 5px 9px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.kpis {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .grid.main {
+      grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+      overflow: hidden;
+      backdrop-filter: blur(28px);
+      position: relative;
+      animation: panelRise 420ms ease both;
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(120deg, rgba(255,255,255,0.13), transparent 34%),
+        radial-gradient(circle at 100% 0%, rgba(255, 84, 27, 0.18), transparent 42%);
+      opacity: 0.72;
+    }
+
+    .panel-header {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      position: relative;
+      z-index: 1;
+    }
+
+    .panel-header h3 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.25;
+      font-weight: 760;
+    }
+
+    .panel-body {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .kpi {
+      min-height: 132px;
+      padding: 16px;
+      display: grid;
+      gap: 8px;
+      align-content: space-between;
+      background:
+        linear-gradient(112deg, rgba(255, 84, 27, 0.22) 0%, transparent 42%),
+        linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04));
+      border-color: rgba(255, 122, 55, 0.22);
+    }
+
+    .kpi span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .kpi strong {
+      font-size: 30px;
+      line-height: 1;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .kpi small {
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .riskbar {
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.10);
+      overflow: hidden;
+    }
+
+    .riskbar div {
+      height: 100%;
+      width: 0%;
+      background: var(--green);
+      transition: width 220ms ease, background 220ms ease;
+    }
+
+    .module-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .module {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: 8px 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background:
+        linear-gradient(120deg, rgba(255, 84, 27, 0.12), transparent 42%),
+        rgba(255,255,255,0.06);
+    }
+
+    .module-index {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: #1b0b04;
+      background: linear-gradient(135deg, #ffe76b, #ff7a21);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .module strong {
+      font-size: 13px;
+    }
+
+    .module em {
+      display: block;
+      margin-top: 2px;
+      font-style: normal;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .module p {
+      grid-column: 2 / -1;
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .module-meter {
+      grid-column: 2 / -1;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.09);
+      overflow: hidden;
+    }
+
+    .module-meter div {
+      width: 0%;
+      height: 100%;
+      background: var(--green);
+    }
+
+    .score {
+      font-weight: 800;
+      color: var(--green);
+    }
+
+    .score.high { color: var(--amber); }
+    .score.critical { color: var(--red); }
+
+    .evidence-list, .trace-list, .action-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 8px;
+    }
+
+    .evidence-list li, .trace-list li, .action-list li {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 9px 10px;
+      background: rgba(255,255,255,0.06);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .trace-list li {
+      border-left: 4px solid var(--blue);
+    }
+
+    .action-list li {
+      border-left: 4px solid var(--violet);
+    }
+
+    .topology {
+      width: 100%;
+      min-height: 320px;
+      object-fit: contain;
+      background: #0b0b0b;
+      display: block;
+    }
+
+    canvas {
+      width: 100%;
+      height: 210px;
+      display: block;
+    }
+
+    .chat-log {
+      height: 300px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.05), transparent),
+        rgba(0,0,0,0.18);
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .msg {
+      padding: 8px 10px;
+      border-radius: 7px;
+      max-width: 92%;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .msg.user {
+      justify-self: end;
+      background: rgba(54, 166, 255, 0.18);
+      color: #d9efff;
+    }
+
+    .msg.agent {
+      justify-self: start;
+      background: rgba(255, 84, 27, 0.16);
+      color: #ffe1d3;
+    }
+
+    .chat-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 96px;
+      gap: 8px;
+    }
+
+    .quick-prompts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .quick-prompts button {
+      width: auto;
+      min-height: 32px;
+      padding: 6px 9px;
+      border-color: rgba(255, 138, 36, 0.22);
+      color: #ffd7c4;
+      background: rgba(255, 84, 27, 0.10);
+      font-size: 12px;
+    }
+
+    .fusion-svg {
+      width: 100%;
+      min-height: 360px;
+      display: block;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at 50% 48%, rgba(255,84,27,0.18), transparent 30%),
+        linear-gradient(135deg, rgba(255,255,255,0.04), transparent),
+        #0d0d0d;
+    }
+
+    .fusion-node {
+      fill: rgba(255,255,255,0.08);
+      stroke: rgba(255,255,255,0.18);
+      stroke-width: 1;
+    }
+
+    .fusion-core {
+      fill: url(#coreGradient);
+      stroke: rgba(255, 231, 107, 0.70);
+      stroke-width: 1.5;
+      transform-origin: center;
+      animation: coreBreath 3s ease-in-out infinite;
+    }
+
+    .fusion-line {
+      stroke: rgba(255, 145, 61, 0.62);
+      stroke-width: 2;
+      fill: none;
+      stroke-dasharray: 12 16;
+      animation: flowDash 2.8s linear infinite;
+    }
+
+    .fusion-label {
+      fill: #f7f4ef;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .fusion-sub {
+      fill: #aaa7a0;
+      font-size: 11px;
+    }
+
+    .model-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .model-stat {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      background: rgba(255,255,255,0.06);
+      min-width: 0;
+    }
+
+    .model-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+
+    .model-stat strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .input-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .input-card {
+      display: grid;
+      grid-template-columns: 12px minmax(0, 1fr);
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 11px;
+      background:
+        linear-gradient(135deg, rgba(255,84,27,0.11), transparent 44%),
+        rgba(255,255,255,0.055);
+    }
+
+    .input-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-top: 4px;
+      background: var(--orange);
+      box-shadow: 0 0 20px rgba(255,84,27,0.42);
+    }
+
+    .input-card strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .input-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .status-line {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .orbit-hero {
+      min-height: 360px;
+      border-radius: 14px;
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse at 50% 18%, #ffe96a 0%, #ff9c22 32%, rgba(255,84,27,0.62) 48%, transparent 50%),
+        radial-gradient(ellipse at 50% 98%, rgba(255,218,58,0.92) 0%, rgba(255,84,27,0.74) 39%, rgba(121,13,6,0.55) 64%, transparent 66%),
+        linear-gradient(180deg, #7d1207 0%, #f14f12 48%, #140d0b 100%);
+      box-shadow: 0 28px 80px rgba(255, 84, 27, 0.22), inset 0 1px rgba(255,255,255,0.16);
+      border: 1px solid rgba(255, 165, 79, 0.24);
+    }
+
+    .command-deck {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .orbit-stage {
+      min-height: 0;
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(255,255,255,0.12);
+      background:
+        radial-gradient(circle at 52% 47%, rgba(40,93,151,0.16), transparent 24%),
+        linear-gradient(120deg, rgba(255,255,255,0.04), transparent 36%),
+        #090b0d;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-rows: auto minmax(310px, 1fr) auto;
+      gap: 14px;
+      padding: 20px 24px;
+    }
+
+    .orbit-stage::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.72;
+      pointer-events: none;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,0.92) 0 1px, transparent 1.6px),
+        radial-gradient(circle, rgba(255,255,255,0.46) 0 1px, transparent 1.8px),
+        radial-gradient(circle at 50% 50%, transparent 0, rgba(0,0,0,0.35) 70%);
+      background-size: 58px 58px, 97px 97px, 100% 100%;
+    }
+
+    .stage-topbar {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .stage-title {
+      display: grid;
+      gap: 6px;
+      max-width: 620px;
+    }
+
+    .stage-title span {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 850;
+    }
+
+    .stage-title h2 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.05;
+      font-weight: 860;
+    }
+
+    .stage-title p {
+      margin: 0;
+      color: #d9d4ca;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .risk-capsule {
+      min-width: 160px;
+      padding: 12px;
+      border: 1px solid rgba(216,189,114,0.34);
+      border-radius: 8px;
+      background: rgba(0,0,0,0.38);
+      backdrop-filter: blur(14px);
+    }
+
+    .risk-capsule span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 7px;
+    }
+
+    .risk-capsule strong {
+      display: block;
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .space-scene {
+      position: relative;
+      z-index: 2;
+      display: block;
+      overflow: visible;
+      min-width: 0;
+    }
+
+    .command-charts {
+      min-height: 310px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .command-panel {
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.055), rgba(255,255,255,0.02)),
+        rgba(0,0,0,0.34);
+      backdrop-filter: blur(16px);
+      padding: 14px;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .command-panel h3 {
+      margin: 0 0 10px;
+      color: #d8d2c2;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .command-panel canvas {
+      height: 260px;
+      max-height: 260px;
+    }
+
+    .decision-stack {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      min-height: 0;
+    }
+
+    .decision-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 7px;
+      background: rgba(255,255,255,0.045);
+    }
+
+    .decision-dot {
+      width: 10px;
+      height: 10px;
+      margin-top: 4px;
+      border-radius: 999px;
+      background: var(--ops-gold);
+    }
+
+    .decision-row strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 3px;
+    }
+
+    .decision-row span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .orbit-hud {
+      position: relative;
+      z-index: 3;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .hud-card {
+      min-height: 82px;
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 8px;
+      background: rgba(0,0,0,0.35);
+      backdrop-filter: blur(16px);
+    }
+
+    .hud-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+      font-weight: 850;
+    }
+
+    .hud-card strong {
+      display: block;
+      font-size: 22px;
+      line-height: 1.05;
+    }
+
+    .hud-card small {
+      color: #d0c9b8;
+      font-size: 12px;
+    }
+
+    .agent-rack {
+      padding: 18px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      background: rgba(27,27,25,0.72);
+      backdrop-filter: blur(22px);
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 14px;
+      min-height: 0;
+      align-content: start;
+    }
+
+    .commander-card {
+      border: 1px solid rgba(216,189,114,0.30);
+      border-radius: 8px;
+      padding: 13px;
+      background: rgba(216,189,114,0.07);
+    }
+
+    .commander-card strong {
+      display: block;
+      font-size: 17px;
+      margin-bottom: 7px;
+    }
+
+    .commander-card p {
+      margin: 0;
+      color: #d8d2c2;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .approval-gate {
+      display: grid;
+      gap: 11px;
+      border: 1px solid rgba(255, 138, 36, 0.46);
+      border-radius: 8px;
+      padding: 13px;
+      background:
+        linear-gradient(135deg, rgba(255,84,27,0.24), rgba(216,189,114,0.08)),
+        rgba(0,0,0,0.24);
+      box-shadow: 0 18px 42px rgba(255,84,27,0.14);
+    }
+
+    .approval-gate.hidden {
+      display: none;
+    }
+
+    .approval-gate span {
+      display: block;
+      color: #ffd7c4;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 850;
+      margin-bottom: 6px;
+    }
+
+    .approval-gate strong {
+      display: block;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .approval-gate p {
+      margin: 7px 0 0;
+      color: #ded8c8;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .approval-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .autonomy-loop {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+    }
+
+    .loop-step {
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 7px;
+      padding: 8px 6px;
+      text-align: center;
+      background: rgba(255,255,255,0.045);
+      color: #d7d1c4;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .loop-step.active {
+      color: #0d1d14;
+      border-color: rgba(141,255,189,0.6);
+      background: linear-gradient(135deg, #8dffbd, #d8bd72);
+      box-shadow: 0 8px 24px rgba(141,255,189,0.12);
+    }
+
+    .agent-list {
+      display: grid;
+      gap: 9px;
+      overflow: auto;
+      padding-right: 4px;
+      max-height: 520px;
+    }
+
+    .agent-card {
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      padding: 11px;
+      background: rgba(255,255,255,0.045);
+    }
+
+    .agent-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 7px;
+    }
+
+    .agent-card strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .agent-card p {
+      margin: 0;
+      color: #d7d1c4;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .agent-state {
+      color: var(--live);
+      font-size: 12px;
+      font-style: italic;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .agent-state.warn { color: #ffdf82; }
+    .agent-state.critical { color: #ff9a8f; }
+
+    .agent-meter {
+      height: 4px;
+      margin-top: 9px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.11);
+      overflow: hidden;
+    }
+
+    .agent-meter div {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: var(--live);
+    }
+
+    .orbit-hero::before {
+      content: "";
+      position: absolute;
+      left: 11%;
+      right: 11%;
+      top: 12%;
+      height: 45%;
+      border-radius: 50%;
+      background: radial-gradient(ellipse at 50% 38%, #fff18a 0%, #ffc43d 47%, #d64612 80%);
+      box-shadow: 0 38px 70px rgba(0,0,0,0.34), 0 0 85px rgba(255, 210, 57, 0.55);
+      transform: perspective(700px) rotateX(58deg);
+    }
+
+    .orbit-hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, transparent 0 23%, rgba(255,255,255,0.18) 26%, transparent 31%),
+        linear-gradient(90deg, transparent 0 48%, rgba(255,255,255,0.10) 51%, transparent 56%);
+      mix-blend-mode: screen;
+      opacity: 0.45;
+      pointer-events: none;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      min-height: 304px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.58fr);
+      align-items: end;
+      gap: 28px;
+    }
+
+    .hero-copy {
+      display: grid;
+      gap: 12px;
+      max-width: 760px;
+    }
+
+    .eyebrow {
+      width: fit-content;
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.24);
+      color: #210b05;
+      font-size: 12px;
+      font-weight: 800;
+      box-shadow: inset 0 1px rgba(255,255,255,0.30);
+    }
+
+    .hero-copy h2 {
+      margin: 0;
+      font-size: 68px;
+      line-height: 0.92;
+      letter-spacing: 0;
+      color: #fff9ee;
+      text-shadow: 0 12px 42px rgba(0,0,0,0.32);
+    }
+
+    .hero-copy p {
+      margin: 0;
+      color: rgba(255,255,255,0.78);
+      font-size: 15px;
+      max-width: 620px;
+      line-height: 1.55;
+    }
+
+    .hero-status {
+      display: grid;
+      gap: 10px;
+      padding: 16px;
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 8px;
+      background: rgba(18, 18, 18, 0.38);
+      backdrop-filter: blur(18px);
+    }
+
+    .hero-status strong {
+      font-size: 34px;
+      line-height: 1;
+      color: #fff;
+    }
+
+    .hero-status span {
+      color: rgba(255,255,255,0.72);
+      font-size: 13px;
+    }
+
+    .kpi-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .kpi-label em {
+      font-style: normal;
+      color: #ffc9ad;
+      font-size: 11px;
+      text-transform: none;
+      font-weight: 700;
+    }
+
+    @media (max-width: 1120px) {
+      .shell { grid-template-columns: 1fr; }
+      .rail { position: static; }
+      .grid.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid.main, .grid.two { grid-template-columns: 1fr; }
+      .command-deck { grid-template-columns: 1fr; }
+      .agent-rack { min-height: 0; }
+      .agent-list { max-height: none; }
+      .hero-content { grid-template-columns: 1fr; align-items: end; }
+      .hero-copy h2 { font-size: 56px; }
+    }
+
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      .grid.kpis { grid-template-columns: 1fr; }
+      .chat-form { grid-template-columns: 1fr; }
+      .topline h2 { font-size: 28px; }
+      .hero-copy h2 { font-size: 42px; }
+      .orbit-hero { padding: 18px; min-height: 420px; }
+      .orbit-stage { padding: 16px; grid-template-rows: auto auto auto; }
+      .stage-topbar { flex-direction: column; }
+      .stage-title h2 { font-size: 25px; }
+      .risk-capsule { width: 100%; }
+      .orbit-hud { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .command-charts { grid-template-columns: 1fr; min-height: auto; }
+      .command-panel canvas { height: 220px; max-height: 220px; }
+      .module { grid-template-columns: 30px minmax(0, 1fr); }
+      .module .score { grid-column: 2; justify-self: start; }
+      .model-strip { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand">
+        <h1>OrbitOps</h1>
+        <span>Multimodal mission agent console</span>
+      </div>
+
+      <div class="nav-tile">Overview</div>
+
+      <div class="mission-brief">
+        <h3>Mission</h3>
+        <strong id="sideMission">AKJA-01</strong>
+        <div class="mission-clock" id="sideClock">--:-- UTC</div>
+        <div class="mission-notes">
+          <div id="sidePhase">orbit phase pending</div>
+          <div>link store & forward</div>
+          <div>agent command loop v2</div>
+        </div>
+        <div class="brief-grid">
+          <div class="brief-stat"><span>Speed</span><strong>8.05</strong><small>km/s</small></div>
+          <div class="brief-stat"><span>Altitude</span><strong>550</strong><small>km</small></div>
+          <div class="brief-stat"><span>Training load</span><strong id="sideLoad">--</strong><small>active run</small></div>
+          <div class="brief-stat"><span>Agent latency</span><strong id="sideLatency">34 ms</strong><small>loop</small></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <label>Scenario
+          <select id="scenario">
+            <option value="mixed">mixed</option>
+            <option value="nominal">nominal</option>
+            <option value="thermal_ramp">thermal_ramp</option>
+            <option value="radiation_pass">radiation_pass</option>
+            <option value="downlink_congestion">downlink_congestion</option>
+            <option value="scheduler_mismatch">scheduler_mismatch</option>
+            <option value="power_eclipse">power_eclipse</option>
+          </select>
+        </label>
+        <label>Seed
+          <input id="seed" type="number" value="742105">
+        </label>
+        <label>Intensity
+          <input id="intensity" type="range" min="0" max="1" step="0.01" value="0.72">
+        </label>
+        <label>Noise
+          <input id="noise" type="range" min="0" max="1" step="0.01" value="0.18">
+        </label>
+        <button id="start" class="primary">Start stream</button>
+        <button id="step">Step forward</button>
+        <button id="stop" class="warn">Stop stream</button>
+      </div>
+
+      <div class="group">
+        <label>Policy
+          <select id="policy">
+            <option value="balanced">balanced</option>
+            <option value="conservative">conservative</option>
+            <option value="aggressive">aggressive</option>
+          </select>
+        </label>
+        <button id="feedback">Apply policy</button>
+        <button id="deep">Invoke Nemotron</button>
+        <label>
+          <span><input id="forceCrusoe" type="checkbox" checked> route chat to Nemotron</span>
+        </label>
+      </div>
+
+      <div class="group">
+        <span class="source-pill" id="source">source: local</span>
+        <div id="streamCard" class="stream-card offline">
+          <span class="stream-led"></span>
+          <div>
+            <strong id="streamTitle">Stream offline</strong>
+            <span id="streamMeta">No active telemetry feed.</span>
+          </div>
+          <div class="stream-progress"><div id="streamProgress"></div></div>
+        </div>
+        <div class="status-line" id="status">new API required</div>
+      </div>
+    </aside>
+
+    <main>
+      <section class="command-deck">
+        <div class="orbit-stage">
+          <div class="stage-topbar">
+            <div class="stage-title">
+              <span>Autonomous mission command</span>
+              <h2 id="headline">Multimodal agent standing by</h2>
+              <p id="event">Synthetic orbital stream ready for real-time analysis.</p>
+              <div class="meta">
+                <span id="mission">mission --</span>
+                <span id="clock">clock --</span>
+                <span id="phase">phase --</span>
+                <span id="model">model --</span>
+              </div>
+            </div>
+            <div class="risk-capsule">
+              <span>Live mission risk</span>
+              <strong id="heroRisk">--</strong>
+              <div class="riskbar"><div id="heroRiskFill"></div></div>
+              <span id="heroSummary">Waiting for the agent stream.</span>
+            </div>
+          </div>
+
+          <div class="space-scene">
+            <div class="command-charts">
+              <div class="command-panel">
+                <h3>Live risk and telemetry</h3>
+                <canvas id="commandChart" width="900" height="300"></canvas>
+              </div>
+              <div class="command-panel">
+                <h3>Agent decision stack</h3>
+                <div class="decision-stack">
+                  <div class="decision-row">
+                    <span class="decision-dot"></span>
+                    <div><strong id="decisionPrimary">Primary driver pending</strong><span id="decisionPrimaryText">Waiting for agent output.</span></div>
+                  </div>
+                  <div class="decision-row">
+                    <span class="decision-dot"></span>
+                    <div><strong id="decisionAction">Action pending</strong><span id="decisionActionText">No command selected yet.</span></div>
+                  </div>
+                  <div class="decision-row">
+                    <span class="decision-dot"></span>
+                    <div><strong id="decisionQuestion">Operator gate</strong><span id="decisionQuestionText">No blocking question.</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="orbit-hud">
+            <div class="hud-card"><span>Thermal</span><strong id="sceneTemp">--</strong><small>GPU / radiator read</small></div>
+            <div class="hud-card"><span>Power</span><strong id="sceneBattery">--</strong><small>orbital reserve</small></div>
+            <div class="hud-card"><span>Downlink</span><strong id="sceneDownlink">--</strong><small>contact capacity</small></div>
+            <div class="hud-card"><span>Agent loop</span><strong id="sceneLoop">observe</strong><small id="sceneLoopHint">autonomy cycle</small></div>
+          </div>
+        </div>
+
+        <aside class="agent-rack">
+          <div>
+            <h3>Operations</h3>
+            <h2 style="margin:4px 0 0;font-size:28px;line-height:1;">Agents</h2>
+          </div>
+          <div class="commander-card">
+            <strong>Commander Agent</strong>
+            <p id="commanderDecision">Waiting for findings from domain agents.</p>
+          </div>
+          <div id="approvalGate" class="approval-gate hidden">
+            <div>
+              <span id="approvalStatus">Operator approval required</span>
+              <strong id="approvalTitle">Action pending</strong>
+              <p id="approvalReason">The agent will request approval when a sensitive mission action is recommended.</p>
+            </div>
+            <div class="approval-buttons">
+              <button id="approveAction" class="primary" type="button">Approve</button>
+              <button id="rejectAction" class="warn" type="button">Reject</button>
+            </div>
+          </div>
+          <div class="autonomy-loop" id="autonomyLoop">
+            <div class="loop-step active">Observe</div>
+            <div class="loop-step">Calculate</div>
+            <div class="loop-step">Reason</div>
+            <div class="loop-step">Act</div>
+          </div>
+          <div class="agent-list" id="agentRack"></div>
+        </aside>
+      </section>
+
+      <section class="grid kpis">
+        <div class="panel kpi">
+          <div class="kpi-label"><span>Mission risk</span><em>0-100</em></div>
+          <strong id="risk">--</strong>
+          <div class="riskbar"><div id="riskFill"></div></div>
+          <small id="severity">--</small>
+        </div>
+        <div class="panel kpi">
+          <div class="kpi-label"><span>Primary driver</span><em>module</em></div>
+          <strong id="driver">--</strong>
+          <small id="driverHint">Dominant calculation module.</small>
+        </div>
+        <div class="panel kpi">
+          <div class="kpi-label"><span>Incident ETA</span><em>ETA</em></div>
+          <strong id="eta">--</strong>
+          <small>Time before critical action or event.</small>
+        </div>
+        <div class="panel kpi">
+          <div class="kpi-label"><span>Agent confidence</span><em>quality</em></div>
+          <strong id="confidenceValue">--</strong>
+          <small id="samples">samples --</small>
+        </div>
+      </section>
+
+      <section class="grid two">
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Nemotron multimodal pipeline</h3>
+            <span class="status-line" id="inputCount">0 inputs</span>
+          </div>
+          <div class="panel-body">
+            <svg class="fusion-svg" viewBox="0 0 920 430" role="img" aria-label="Multimodal reasoning pipeline">
+              <defs>
+                <linearGradient id="coreGradient" x1="0" x2="1" y1="0" y2="1">
+                  <stop offset="0%" stop-color="#ffed73"/>
+                  <stop offset="48%" stop-color="#ff8a24"/>
+                  <stop offset="100%" stop-color="#ff541b"/>
+                </linearGradient>
+                <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="rgba(255,145,61,0.8)"></path>
+                </marker>
+              </defs>
+              <rect x="24" y="30" width="206" height="48" rx="8" class="fusion-node"></rect>
+              <text x="44" y="56" class="fusion-label">Telemetry stream</text>
+              <text x="44" y="72" class="fusion-sub">GPU, power, orbit, ECC</text>
+              <rect x="24" y="94" width="206" height="48" rx="8" class="fusion-node"></rect>
+              <text x="44" y="120" class="fusion-label">Calculation</text>
+              <text x="44" y="136" class="fusion-sub">risk modules + formulas</text>
+              <rect x="24" y="158" width="206" height="48" rx="8" class="fusion-node"></rect>
+              <text x="44" y="184" class="fusion-label">Thermal readout</text>
+              <text x="44" y="200" class="fusion-sub">radiator margin + hotspot</text>
+              <rect x="24" y="238" width="206" height="48" rx="8" class="fusion-node"></rect>
+              <text x="44" y="264" class="fusion-label">Topology image</text>
+              <text x="44" y="280" class="fusion-sub">visual heatmap context</text>
+              <rect x="24" y="318" width="206" height="48" rx="8" class="fusion-node"></rect>
+              <text x="44" y="344" class="fusion-label">Operator intent</text>
+              <text x="44" y="360" class="fusion-sub">query + feedback memory</text>
+
+              <path d="M230 54 C326 60 344 144 386 158" class="fusion-line" marker-end="url(#arrow)"></path>
+              <path d="M230 118 C310 126 338 162 386 174" class="fusion-line" marker-end="url(#arrow)"></path>
+              <path d="M230 182 C306 184 338 184 386 190" class="fusion-line" marker-end="url(#arrow)"></path>
+              <path d="M230 262 C318 254 348 222 386 210" class="fusion-line" marker-end="url(#arrow)"></path>
+              <path d="M230 342 C338 326 352 252 386 232" class="fusion-line" marker-end="url(#arrow)"></path>
+
+              <rect x="386" y="132" width="202" height="132" rx="18" class="fusion-core"></rect>
+              <text x="424" y="176" fill="#1b0b04" font-size="17" font-weight="850">Nemotron 3 Omni</text>
+              <text x="424" y="204" fill="#361307" font-size="12" font-weight="760">multimodal fusion</text>
+              <text x="424" y="226" fill="#361307" font-size="12" font-weight="760">prediction + action contract</text>
+
+              <path d="M588 166 C652 126 684 78 744 70" class="fusion-line" marker-end="url(#arrow)"></path>
+              <path d="M588 198 C654 198 684 198 744 198" class="fusion-line" marker-end="url(#arrow)"></path>
+              <path d="M588 230 C652 276 684 338 744 350" class="fusion-line" marker-end="url(#arrow)"></path>
+              <rect x="744" y="42" width="154" height="58" rx="8" class="fusion-node"></rect>
+              <text x="764" y="68" class="fusion-label">Risk forecast</text>
+              <text x="764" y="86" class="fusion-sub">severity + ETA</text>
+              <rect x="744" y="170" width="154" height="58" rx="8" class="fusion-node"></rect>
+              <text x="764" y="196" class="fusion-label">Action plan</text>
+              <text x="764" y="214" class="fusion-sub">reversible first</text>
+              <rect x="744" y="322" width="154" height="58" rx="8" class="fusion-node"></rect>
+              <text x="764" y="348" class="fusion-label">Operator answer</text>
+              <text x="764" y="366" class="fusion-sub">evidence grounded</text>
+            </svg>
+            <div class="model-strip">
+              <div class="model-stat"><span>model</span><strong id="pipelineModel">--</strong></div>
+              <div class="model-stat"><span>mode</span><strong id="pipelineMode">stream</strong></div>
+              <div class="model-stat"><span>source</span><strong id="pipelineSource">local</strong></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Live input bundle</h3>
+            <span class="status-line" id="bundleStatus">waiting</span>
+          </div>
+          <div class="panel-body">
+            <div id="inputBundle" class="input-stack"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid main">
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Multimodal topology</h3>
+            <span class="status-line" id="topologyCaption">waiting</span>
+          </div>
+          <img id="topology" class="topology" alt="Synthetic satellite topology">
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Calculation modules</h3>
+            <span class="status-line" id="moduleCount">0 modules</span>
+          </div>
+          <div class="panel-body">
+            <div id="modules" class="module-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid two">
+        <div class="panel">
+          <div class="panel-header"><h3>Risk timeline</h3></div>
+          <div class="panel-body"><canvas id="riskChart" width="900" height="260"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>Thermal / battery</h3></div>
+          <div class="panel-body"><canvas id="telemetryChart" width="900" height="260"></canvas></div>
+        </div>
+      </section>
+
+      <section class="grid two">
+        <div class="panel">
+          <div class="panel-header"><h3>Evidence</h3></div>
+          <div class="panel-body"><ul id="evidence" class="evidence-list"></ul></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>Auditable reasoning</h3></div>
+          <div class="panel-body"><ul id="trace" class="trace-list"></ul></div>
+        </div>
+      </section>
+
+      <section class="grid two">
+        <div class="panel">
+          <div class="panel-header"><h3>Proposed actions</h3></div>
+          <div class="panel-body"><ul id="actions" class="action-list"></ul></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>Operator dialogue</h3></div>
+          <div class="panel-body">
+            <div id="chatLog" class="chat-log"></div>
+            <div class="quick-prompts">
+              <button type="button" data-prompt="Use telemetry, calculation, thermal readout and topology image. Why this diagnosis?">Evidence</button>
+              <button type="button" data-prompt="Ask Nemotron for the least risky reversible action.">Safe action</button>
+              <button type="button" data-prompt="What can you do as an autonomous multimodal OrbitOps agent?">Capabilities</button>
+              <button type="button" data-prompt="Run a what-if: battery drops by 10 percent during eclipse while downlink stays closed.">What-if</button>
+              <button type="button" data-prompt="Explain the calculation modules and rank the current drivers.">Calculation</button>
+              <button type="button" data-prompt="Analyze the topology image and telemetry for thermal risk.">Thermal</button>
+              <button type="button" data-prompt="Explain how Nemotron 3 is trained and evaluated for this mission agent.">Nemotron</button>
+              <button type="button" data-prompt="If I reject the proposed action, what happens next?">Rejection</button>
+            </div>
+            <form id="chatForm" class="chat-form">
+              <input id="chatInput" placeholder="Ask about evidence, topology, telemetry, actions or uncertainty" autocomplete="off">
+              <button class="primary" type="submit">Send</button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      source: null,
+      riskSeries: [],
+      telemetrySeries: [],
+      lastResult: null,
+      pendingAction: null,
+      eventSource: null,
+      streamStatus: null,
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function riskColor(score) {
+      if (score >= 86) return getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+      if (score >= 68) return getComputedStyle(document.documentElement).getPropertyValue('--amber').trim();
+      if (score >= 42) return getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
+      return getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    function simulationPayload() {
+      const seedValue = $('seed').value.trim();
+      return {
+        scenario: $('scenario').value,
+        seed: seedValue ? Number(seedValue) : null,
+        intensity: Number($('intensity').value),
+        noise: Number($('noise').value),
+        step_minutes: 5,
+        auto_advance: true,
+      };
+    }
+
+    async function startSimulation() {
+      setStreamUi({ active: true, running: true, scenario: $('scenario').value, seed: $('seed').value || '--', tick: 0, elapsed_minutes: 0 }, 'starting');
+      $('status').textContent = 'starting stream';
+      const result = await api('/api/simulation/random/start', {
+        method: 'POST',
+        body: JSON.stringify(simulationPayload()),
+      });
+      $('status').textContent = `seed ${result.seed} / ${result.scenario}`;
+      setStreamUi(result);
+      connectStream();
+      await refreshStatus();
+      renderPrediction(await api('/api/agents/predict'));
+    }
+
+    async function stopSimulation() {
+      const result = await api('/api/simulation/random/stop', { method: 'POST' });
+      if (state.eventSource) {
+        state.eventSource.close();
+        state.eventSource = null;
+      }
+      setStreamUi(result);
+      $('status').textContent = result.active ? 'stream paused' : 'no random stream';
+    }
+
+    async function stepSimulation() {
+      $('status').textContent = 'manual step requested';
+      const result = await api('/api/simulation/random/step', { method: 'POST' });
+      setStreamUi(result.status, 'stepped');
+      renderPrediction(result.prediction);
+      await refreshStatus();
+    }
+
+    function connectStream() {
+      if (state.eventSource) state.eventSource.close();
+      state.eventSource = new EventSource('/api/agents/stream');
+      state.eventSource.onopen = () => {
+        if (state.streamStatus) setStreamUi({ ...state.streamStatus, running: true });
+      };
+      state.eventSource.addEventListener('predictive-agent', async (event) => {
+        const result = JSON.parse(event.data);
+        renderPrediction(result);
+        await refreshStatus();
+      });
+      state.eventSource.onerror = () => {
+        $('status').textContent = 'stream reconnecting';
+        if (state.streamStatus) setStreamUi({ ...state.streamStatus, running: false }, 'reconnecting');
+      };
+    }
+
+    async function refreshStatus() {
+      try {
+        const status = await api('/api/simulation/random/status');
+        setStreamUi(status);
+        if (status.active) {
+          $('clock').textContent = `tick ${status.tick} / +${status.elapsed_minutes}m`;
+          $('status').textContent = `seed ${status.seed} / ${status.scenario}`;
+        }
+      } catch (error) {
+        $('status').textContent = `simulation status error ${error.message}`;
+      }
+    }
+
+    function setStreamUi(status, transientLabel = null) {
+      state.streamStatus = status;
+      const card = $('streamCard');
+      const active = Boolean(status?.active);
+      const running = Boolean(status?.running);
+      card.classList.remove('live', 'paused', 'offline');
+      if (!active) {
+        card.classList.add('offline');
+        $('streamTitle').textContent = 'Stream offline';
+        $('streamMeta').textContent = 'No active telemetry feed.';
+        $('start').classList.remove('active');
+        $('stop').classList.remove('active');
+        return;
+      }
+      if (running) {
+        card.classList.add('live');
+        $('streamTitle').textContent = transientLabel === 'starting' ? 'Stream starting' : 'Stream live';
+        $('start').classList.add('active');
+        $('stop').classList.remove('active');
+      } else {
+        card.classList.add('paused');
+        $('streamTitle').textContent = transientLabel === 'reconnecting' ? 'Stream reconnecting' : 'Stream paused';
+        $('start').classList.remove('active');
+        $('stop').classList.add('active');
+      }
+      const tick = status.tick ?? 0;
+      const elapsed = status.elapsed_minutes ?? 0;
+      $('streamMeta').textContent = `${status.scenario || 'scenario'} / seed ${status.seed ?? '--'} / tick ${tick} / +${elapsed}m`;
+    }
+
+    function renderPrediction(result) {
+      state.lastResult = result;
+      const score = Number(result.overall_risk_score || 0);
+      state.riskSeries.push(score);
+      if (state.riskSeries.length > 80) state.riskSeries.shift();
+
+      $('headline').textContent = result.predicted_event || 'Predictive Agent';
+      $('risk').textContent = score.toFixed(1);
+      $('heroRisk').textContent = score.toFixed(1);
+      $('riskFill').style.width = `${Math.max(0, Math.min(100, score))}%`;
+      $('riskFill').style.background = riskColor(score);
+      $('heroRiskFill').style.width = `${Math.max(0, Math.min(100, score))}%`;
+      $('heroRiskFill').style.background = riskColor(score);
+      $('severity').textContent = result.severity || '--';
+      $('driver').textContent = result.primary_driver || '--';
+      $('event').textContent = result.predicted_event || '--';
+      $('driverHint').textContent = `Dominant calculation: ${result.primary_driver || '--'}`;
+      $('eta').textContent = result.eta_minutes === null || result.eta_minutes === undefined ? '--' : `${Number(result.eta_minutes).toFixed(0)}m`;
+      $('confidenceValue').textContent = `${(Number(result.confidence || 0) * 100).toFixed(0)}%`;
+      $('source').textContent = `source: ${result.source}`;
+      $('model').textContent = result.model || '--';
+      $('samples').textContent = `samples ${result.performance_metrics?.samples_used ?? '--'}`;
+      $('mission').textContent = result.mission_id || 'mission --';
+      $('heroSummary').textContent = `${result.severity || '--'} / ${result.primary_driver || '--'} / ${result.source || '--'}`;
+      $('pipelineModel').textContent = result.model || '--';
+      $('pipelineMode').textContent = result.mode || 'stream';
+      $('pipelineSource').textContent = result.source || 'local';
+
+      const telemetry = telemetryFromResult(result);
+      if (telemetry) {
+        $('phase').textContent = telemetry.phase || 'phase --';
+        renderMissionScene(telemetry, result);
+        state.telemetrySeries.push({
+          temperature: Number(telemetry.gpu_temperature_celsius || 0),
+          battery: Number(telemetry.battery_percent || 0),
+        });
+        if (state.telemetrySeries.length > 80) state.telemetrySeries.shift();
+      }
+
+      const image = (result.multimodal_inputs || []).find((item) => item.modality === 'image' && item.uri);
+      if (image) {
+        $('topology').src = image.uri;
+        $('topologyCaption').textContent = image.summary || 'topology';
+      }
+
+      renderModules(result.module_results || []);
+      renderAgentRack(result.module_results || [], result);
+      renderAutonomy(result);
+      renderInputBundle(result.multimodal_inputs || []);
+      renderList('evidence', result.evidence || []);
+      renderList('trace', result.reasoning_trace || []);
+      renderActions(result.recommended_actions || []);
+      renderApprovalGate(result);
+      drawRiskChart();
+      drawTelemetryChart();
+      drawCommandChart();
+    }
+
+    function renderMissionScene(telemetry, result) {
+      const temp = Number(telemetry.gpu_temperature_celsius || 0);
+      const battery = Number(telemetry.battery_percent || 0);
+      const downlink = Number(telemetry.downlink_capacity_gb || 0);
+      $('sceneTemp').textContent = `${temp.toFixed(1)}C`;
+      $('sceneBattery').textContent = `${battery.toFixed(1)}%`;
+      $('sceneDownlink').textContent = `${downlink.toFixed(2)}GB`;
+      $('sideMission').textContent = result.mission_id || 'AKJA-01';
+      $('sideClock').textContent = new Date(result.timestamp || Date.now()).toISOString().slice(11, 19) + ' UTC';
+      $('sidePhase').textContent = String(telemetry.phase || 'orbit pending').toLowerCase().replaceAll('_', ' ');
+      $('sideLoad').textContent = `${Math.round(Number(telemetry.gpu_utilization_percent || 0))}%`;
+    }
+
+    function renderAutonomy(result) {
+      const mode = result.mode || 'stream';
+      const source = result.source || 'local';
+      const labels = ['Observe', 'Calculate', 'Reason', source === 'crusoe' || mode === 'chat' ? 'Act' : 'Advise'];
+      const activeIndex = mode === 'chat' ? 3 : mode === 'deep_analysis' ? 2 : 1;
+      $('sceneLoop').textContent = labels[activeIndex].toLowerCase();
+      $('sceneLoopHint').textContent = source === 'crusoe' ? 'Nemotron active' : 'local autonomy';
+      $('autonomyLoop').innerHTML = labels.map((label, index) => (
+        `<div class="loop-step ${index <= activeIndex ? 'active' : ''}">${label}</div>`
+      )).join('');
+      const action = (result.recommended_actions || [])[0];
+      const actionTitle = action?.type || action?.action_id || 'continue monitoring';
+      $('commanderDecision').textContent = `${result.primary_driver || 'agent'} recommends ${actionTitle}. ${result.operator_questions?.[0] || 'No blocking operator question.'}`;
+      $('decisionPrimary').textContent = result.primary_driver || 'Primary driver pending';
+      $('decisionPrimaryText').textContent = result.predicted_event || 'Waiting for agent output.';
+      $('decisionAction').textContent = actionTitle;
+      $('decisionActionText').textContent = action?.reason || action?.description || 'Recommended action will appear here.';
+      $('decisionQuestionText').textContent = result.operator_questions?.[0] || 'No blocking operator question.';
+    }
+
+    function approvalActionFrom(result) {
+      const actions = result.recommended_actions || [];
+      return actions.find((action) => action.approval && action.approval_status !== 'approved')
+        || actions.find((action) => action.approval && action.approval_status === 'approved')
+        || null;
+    }
+
+    function renderApprovalGate(result) {
+      const action = approvalActionFrom(result);
+      const gate = $('approvalGate');
+      if (!action) {
+        state.pendingAction = null;
+        gate.classList.add('hidden');
+        return;
+      }
+      const actionId = action.action_id || action.type || 'ACTION';
+      const approved = action.approval_status === 'approved';
+      state.pendingAction = approved ? null : { ...action, action_id: actionId };
+      gate.classList.remove('hidden');
+      $('approvalStatus').textContent = approved ? 'Action approved and memorized' : 'Operator approval required';
+      $('approvalTitle').textContent = `${action.type || actionId}${action.value ? ` ${action.value}` : ''}`;
+      $('approvalReason').textContent = action.approval_required_reason || action.reason || 'Sensitive mission action requires operator confirmation.';
+      $('approveAction').disabled = approved;
+      $('rejectAction').disabled = approved;
+      $('approveAction').textContent = approved ? 'Approved' : 'Approve';
+      $('rejectAction').textContent = approved ? 'Locked' : 'Reject';
+    }
+
+    async function decidePendingAction(decision) {
+      if (!state.pendingAction) return;
+      const actionId = state.pendingAction.action_id || state.pendingAction.type;
+      $('status').textContent = `${decision} ${actionId}`;
+      $('approveAction').disabled = true;
+      $('rejectAction').disabled = true;
+      try {
+        const result = await api('/api/agents/actions/decision', {
+          method: 'POST',
+          body: JSON.stringify({
+            action_id: actionId,
+            decision,
+            notes: `Operator ${decision} ${actionId} from dashboard approval gate.`,
+          }),
+        });
+        renderPrediction(result.prediction);
+        const verb = decision === 'approved' ? 'approved' : 'rejected';
+        addChat('agent', `Operator ${verb} ${actionId}. Agent memory updated and mission plan recalculated.`);
+        $('status').textContent = `action ${verb}`;
+      } catch (error) {
+        $('status').textContent = `action decision error ${error.message}`;
+        $('approveAction').disabled = false;
+        $('rejectAction').disabled = false;
+      }
+    }
+
+    function renderAgentRack(modules, result) {
+      const sorted = [...modules].sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0));
+      const cards = sorted.map((module) => {
+        const score = Number(module.risk_score || 0);
+        const state = score >= 86 ? 'escalating' : score >= 68 ? 'intervening' : 'monitoring';
+        const stateClass = score >= 86 ? 'critical' : score >= 68 ? 'warn' : '';
+        const action = (result.recommended_actions || []).find((item) => item.source_module === module.module_id);
+        const next = action?.type || module.action_level || 'NEXT RUN DUE';
+        return `
+          <div class="agent-card">
+            <div class="agent-card-head">
+              <strong>${escapeHtml(agentName(module.module_id, module.module_name))}</strong>
+              <span class="agent-state ${stateClass}">${state}</span>
+            </div>
+            <p>${escapeHtml(module.predicted_event || module.dashboard_summary || 'Monitoring domain envelope.')}</p>
+            <p style="margin-top:6px;color:#aaa7a0;font-size:11px;text-transform:uppercase;letter-spacing:.06em">${escapeHtml(next)}</p>
+            <div class="agent-meter"><div style="width:${Math.max(0, Math.min(100, score))}%;background:${riskColor(score)}"></div></div>
+          </div>
+        `;
+      }).join('');
+      $('agentRack').innerHTML = cards || '<div class="agent-card"><strong>Commander Agent</strong><p>Waiting for domain agents.</p></div>';
+    }
+
+    function agentName(moduleId, fallback) {
+      const names = {
+        checkpoint_downlink: 'Checkpoint / Downlink Agent',
+        orbit_power: 'Power / Orbit Agent',
+        radiation_integrity: 'Radiation / Integrity Agent',
+        thermal_physical: 'Thermal / Physical Agent',
+        workload_gpu: 'Workload Agent',
+      };
+      return names[moduleId] || fallback || moduleId || 'Domain Agent';
+    }
+
+    function telemetryFromResult(result) {
+      const item = (result.multimodal_inputs || []).find((obs) => obs.modality === 'telemetry' && obs.content);
+      return item ? item.content : null;
+    }
+
+    function renderModules(modules) {
+      $('moduleCount').textContent = `${modules.length} modules`;
+      const sorted = [...modules].sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0));
+      $('modules').innerHTML = sorted.map((module, index) => {
+        const score = Number(module.risk_score || 0);
+        const cls = score >= 86 ? 'critical' : score >= 68 ? 'high' : '';
+        const meter = Math.max(0, Math.min(100, score));
+        const name = module.module_name || module.module_id || 'module';
+        return `
+          <div class="module">
+            <span class="module-index">${index + 1}</span>
+            <div>
+              <strong>${escapeHtml(module.module_id || 'module')}</strong>
+              <em>${escapeHtml(name)}</em>
+            </div>
+            <span class="score ${cls}">${score.toFixed(1)}</span>
+            <p>${escapeHtml(module.predicted_event || module.dashboard_summary || '')}</p>
+            <div class="module-meter"><div style="width: ${meter}%; background: ${riskColor(score)}"></div></div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderInputBundle(inputs) {
+      $('inputCount').textContent = `${inputs.length} multimodal inputs`;
+      $('bundleStatus').textContent = inputs.length ? 'active bundle' : 'waiting';
+      $('inputBundle').innerHTML = inputs.map((item) => {
+        const modality = item.modality || 'input';
+        return `
+          <div class="input-card">
+            <span class="input-dot" style="background:${modalityColor(modality)}"></span>
+            <div>
+              <strong>${escapeHtml(modalityLabel(modality))}</strong>
+              <p>${escapeHtml(inputPreview(item))}</p>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function modalityLabel(modality) {
+      const labels = {
+        telemetry: 'Telemetry JSON',
+        report: 'Report',
+        calculation: 'Calculation',
+        thermal: 'Thermal readout',
+        image: 'Topology image',
+        operator_message: 'Operator question',
+      };
+      return labels[modality] || modality;
+    }
+
+    function modalityColor(modality) {
+      if (modality === 'telemetry') return '#36a6ff';
+      if (modality === 'report') return '#b487ff';
+      if (modality === 'calculation') return '#b487ff';
+      if (modality === 'thermal') return '#ff541b';
+      if (modality === 'image') return '#ff8a24';
+      if (modality === 'operator_message') return '#46c887';
+      return '#ff541b';
+    }
+
+    function inputPreview(item) {
+      if (item.modality === 'telemetry' && item.content) {
+        return `phase ${item.content.phase}, GPU ${Number(item.content.gpu_temperature_celsius || 0).toFixed(1)}C, battery ${Number(item.content.battery_percent || 0).toFixed(1)}%, ECC ${item.content.ecc_corrected}/${item.content.ecc_uncorrected}`;
+      }
+      if (item.modality === 'report' && item.content) {
+        return `risk ${Number(item.content.overall_risk_score || 0).toFixed(1)}/100, driver ${item.content.primary_driver}, modules ${(item.content.modules || []).length}`;
+      }
+      if (item.modality === 'calculation' && item.content) {
+        return `risk ${Number(item.content.overall_risk_score || 0).toFixed(1)}/100, driver ${item.content.primary_driver}, modules ${(item.content.modules || []).length}`;
+      }
+      if (item.modality === 'thermal' && item.content) {
+        return `GPU ${Number(item.content.gpu_temperature_c || 0).toFixed(1)}C, margin ${Number(item.content.thermal_margin_c || 0).toFixed(1)}C, band ${item.content.thermal_band}`;
+      }
+      if (item.modality === 'image') {
+        return `${item.summary || 'Synthetic topology heatmap'} sent as ${item.mime_type || 'image'}`;
+      }
+      if (item.modality === 'operator_message') {
+        return String(item.content || item.summary || '').slice(0, 180);
+      }
+      return String(item.summary || item.content || 'multimodal input').slice(0, 180);
+    }
+
+    function renderList(id, items) {
+      $(id).innerHTML = items.slice(0, 8).map((item) => `<li>${escapeHtml(String(item))}</li>`).join('');
+    }
+
+    function renderActions(actions) {
+      $('actions').innerHTML = actions.slice(0, 8).map((action) => {
+        const title = action.type || action.action_id || 'ACTION';
+        const reason = action.reason || action.description || JSON.stringify(action);
+        const approval = action.approval ? ` <span style="color:#ffdf82">[${escapeHtml(action.approval_status || 'approval pending')}]</span>` : '';
+        return `<li><strong>${escapeHtml(title)}${approval}</strong><br>${escapeHtml(reason)}</li>`;
+      }).join('');
+    }
+
+    function drawRiskChart() {
+      const canvas = $('riskChart');
+      const ctx = canvas.getContext('2d');
+      drawFrame(ctx, canvas, 'risk');
+      drawSeries(ctx, canvas, state.riskSeries, 0, 100, riskColor(state.riskSeries.at(-1) || 0));
+    }
+
+    function drawTelemetryChart() {
+      const canvas = $('telemetryChart');
+      const ctx = canvas.getContext('2d');
+      drawFrame(ctx, canvas, 'thermal / battery');
+      const temps = state.telemetrySeries.map((item) => item.temperature);
+      const battery = state.telemetrySeries.map((item) => item.battery);
+      drawSeries(ctx, canvas, temps, 30, 110, '#ff541b');
+      drawSeries(ctx, canvas, battery, 0, 100, '#46c887');
+    }
+
+    function drawCommandChart() {
+      const canvas = $('commandChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      drawFrame(ctx, canvas, 'mission risk / thermal / battery');
+      const temps = state.telemetrySeries.map((item) => item.temperature);
+      const battery = state.telemetrySeries.map((item) => item.battery);
+      drawSeries(ctx, canvas, state.riskSeries, 0, 100, riskColor(state.riskSeries.at(-1) || 0));
+      drawSeries(ctx, canvas, temps, 30, 110, '#ff8a24');
+      drawSeries(ctx, canvas, battery, 0, 100, '#46c887');
+      ctx.fillStyle = '#d8d2c2';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('risk', canvas.width - 150, 28);
+      ctx.fillStyle = '#ff8a24';
+      ctx.fillText('thermal', canvas.width - 104, 28);
+      ctx.fillStyle = '#46c887';
+      ctx.fillText('battery', canvas.width - 44, 28);
+    }
+
+    function drawFrame(ctx, canvas, label) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#111111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      gradient.addColorStop(0, 'rgba(255,84,27,0.16)');
+      gradient.addColorStop(1, 'rgba(54,166,255,0.10)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i < 5; i++) {
+        const y = (canvas.height / 5) * i;
+        ctx.beginPath();
+        ctx.moveTo(32, y);
+        ctx.lineTo(canvas.width - 12, y);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#a0a0a0';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(label, 34, 22);
+    }
+
+    function drawSeries(ctx, canvas, values, min, max, color) {
+      if (!values.length) return;
+      const left = 32;
+      const right = canvas.width - 12;
+      const top = 32;
+      const bottom = canvas.height - 22;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      values.forEach((value, index) => {
+        const x = left + ((right - left) * index) / Math.max(1, values.length - 1);
+        const normalized = Math.max(0, Math.min(1, (value - min) / (max - min)));
+        const y = bottom - normalized * (bottom - top);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    async function deepAnalysis() {
+      $('deep').disabled = true;
+      $('status').textContent = 'invoking Nemotron multimodal analysis';
+      try {
+        const result = await api('/api/agents/predict', {
+          method: 'POST',
+          body: JSON.stringify({
+            message: 'Run a deep multimodal Nemotron analysis. Use telemetry JSON, calculation modules, thermal readout, topology image and operator context. Return evidence, uncertainty, module ranking and an adaptive action plan.',
+            force_crusoe: $('forceCrusoe').checked,
+          }),
+        });
+        renderPrediction(result);
+        addChat('agent', result.response_text || result.predicted_event);
+        $('status').textContent = `analysis ${result.source}`;
+      } catch (error) {
+        $('status').textContent = `analysis error ${error.message}`;
+      } finally {
+        $('deep').disabled = false;
+      }
+    }
+
+    async function sendChat(event) {
+      event.preventDefault();
+      const input = $('chatInput');
+      const message = input.value.trim();
+      if (!message) return;
+      input.value = '';
+      addChat('user', message);
+      try {
+        const result = await api('/api/agents/chat', {
+          method: 'POST',
+          body: JSON.stringify({
+            message,
+            force_crusoe: $('forceCrusoe').checked,
+          }),
+        });
+        renderPrediction(result);
+        addChat('agent', result.response_text || result.predicted_event);
+      } catch (error) {
+        addChat('agent', `Error: ${error.message}`);
+      }
+    }
+
+    async function applyFeedback() {
+      const policy = $('policy').value;
+      const rejected = (state.lastResult?.recommended_actions || []).slice(0, 1).map((item) => item.action_id || item.type).filter(Boolean);
+      const memory = await api('/api/agents/feedback', {
+        method: 'POST',
+        body: JSON.stringify({
+          message: `Operator policy set to ${policy}`,
+          risk_tolerance: policy,
+          rejected_action_ids: policy === 'aggressive' ? rejected : [],
+          policy_notes: [`UI policy ${policy}`],
+        }),
+      });
+      $('status').textContent = `feedback ${memory.feedback_count}`;
+    }
+
+    function addChat(kind, text) {
+      const node = document.createElement('div');
+      node.className = `msg ${kind}`;
+      node.textContent = text;
+      $('chatLog').appendChild(node);
+      $('chatLog').scrollTop = $('chatLog').scrollHeight;
+    }
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    $('start').addEventListener('click', () => startSimulation().catch((error) => $('status').textContent = error.message));
+    $('stop').addEventListener('click', () => stopSimulation().catch((error) => $('status').textContent = error.message));
+    $('step').addEventListener('click', () => stepSimulation().catch((error) => $('status').textContent = error.message));
+    $('deep').addEventListener('click', deepAnalysis);
+    $('feedback').addEventListener('click', () => applyFeedback().catch((error) => $('status').textContent = error.message));
+    $('approveAction').addEventListener('click', () => decidePendingAction('approved'));
+    $('rejectAction').addEventListener('click', () => decidePendingAction('rejected'));
+    $('chatForm').addEventListener('submit', sendChat);
+    document.querySelectorAll('[data-prompt]').forEach((button) => {
+      button.addEventListener('click', () => {
+        $('chatInput').value = button.dataset.prompt;
+        $('chatForm').requestSubmit();
+      });
+    });
+
+    async function boot() {
+      try {
+        await api('/api/agents/memory');
+        const status = await api('/api/simulation/random/status');
+        if (!status.active) await startSimulation();
+        else {
+          $('status').textContent = `seed ${status.seed} / ${status.scenario}`;
+          connectStream();
+          await refreshStatus();
+          renderPrediction(await api('/api/agents/predict'));
+        }
+      } catch (error) {
+        $('status').textContent = `wrong backend or server not running: ${error.message}`;
+        $('headline').textContent = 'Start run_new_dashboard.bat, then open http://127.0.0.1:8010';
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>
