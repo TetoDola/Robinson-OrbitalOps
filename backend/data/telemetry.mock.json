@@ -1,0 +1,38 @@
+{
+  "contractVersion": "orbitalops.telemetry.v1",
+  "generatedAt": "2026-07-05T00:00:00.000Z",
+  "source": {
+    "mode": "mock",
+    "provider": "orbitalops-backend"
+  },
+  "mission": {
+    "id": "AKJA-DEMO",
+    "activeSatelliteId": "AKJA-01"
+  },
+  "satellites": [
+    {
+      "id": "AKJA-01",
+      "name": "AKJA-01 Orbital Datacenter",
+      "orbit": {
+        "position": {
+          "latDeg": -12.8,
+          "lonDeg": -47.6,
+          "altitudeKm": 420
+        },
+        "velocityKms": 7.67,
+        "timestamp": "2026-07-05T00:00:00.000Z"
+      },
+      "telemetry": {
+        "radiationRisk": "unknown",
+        "batteryPercent": 38,
+        "solarKw": 1.2,
+        "computeLoadPercent": 82,
+        "latencyMs": 42,
+        "timeToEclipseMin": 11,
+        "downlinkWindowGb": 22,
+        "eccErrorsLast5Min": 921,
+        "highestTempC": 20.8
+      }
+    }
+  ]
+}
