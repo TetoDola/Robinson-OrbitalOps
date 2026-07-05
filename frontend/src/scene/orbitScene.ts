@@ -552,7 +552,18 @@ export function createOrbitScene(container: HTMLElement): OrbitScene {
 
     if (performance.now() - lastTelemetryAt > 250) {
       lastTelemetryAt = performance.now();
-      useWorldStore.getState().setTelemetry(telemetry);
+      const store = useWorldStore.getState();
+      store.setTelemetry(telemetry);
+      store.pushMetrics({
+        battery,
+        solar: solarInput,
+        latency: Math.max(24, latency),
+        computeLoad,
+        eclipseMin: Math.max(0, eclipseMinutes),
+        downlinkWindowGb: downlinkCapacity,
+        eccErrors,
+        thermal,
+      });
     }
   }
 

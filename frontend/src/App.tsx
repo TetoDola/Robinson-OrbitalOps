@@ -8,9 +8,10 @@ import {
   getWorldState,
 } from "./api/client";
 import { connectLiveSocket } from "./api/liveSocket";
-import MissionPatchPanel from "./components/MissionPatchPanel";
-import SceneViewport from "./components/SceneViewport";
-import TelemetryPanel from "./components/TelemetryPanel";
+import AssetConsole from "./components/AssetConsole";
+import CommandBar from "./components/CommandBar";
+import FleetView from "./components/FleetView";
+import { useAppStore } from "./store/appStore";
 import { useWorldStore } from "./store/worldStore";
 
 export default function App() {
@@ -48,11 +49,12 @@ export default function App() {
     return connectLiveSocket();
   }, []);
 
+  const view = useAppStore((state) => state.view);
+
   return (
     <div className="app-shell">
-      <TelemetryPanel />
-      <SceneViewport />
-      <MissionPatchPanel />
+      <CommandBar />
+      <div className="view">{view === "fleet" ? <FleetView /> : <AssetConsole />}</div>
     </div>
   );
 }

@@ -59,11 +59,42 @@ export const initialTelemetry: TelemetrySnapshot = {
   patchConfidence: "87%",
 };
 
+/** Raw numeric telemetry, buffered into rolling history for sparklines / meters. */
+export interface TelemetryMetrics {
+  battery: number;
+  solar: number;
+  latency: number;
+  computeLoad: number;
+  eclipseMin: number;
+  downlinkWindowGb: number;
+  eccErrors: number;
+  thermal: number;
+}
+
+export type MetricKey = keyof TelemetryMetrics;
+export type MetricsHistory = Record<MetricKey, number[]>;
+
+/** ~15 s of trend at the 250 ms telemetry cadence. */
+const HISTORY_LEN = 60;
+
+const emptyHistory = (): MetricsHistory => ({
+  battery: [],
+  solar: [],
+  latency: [],
+  computeLoad: [],
+  eclipseMin: [],
+  downlinkWindowGb: [],
+  eccErrors: [],
+  thermal: [],
+});
+
 interface WorldStore {
   worldState: WorldState | null;
   worldVersion: number | null;
   scenarioRunId: string | null;
   telemetry: TelemetrySnapshot;
+  metrics: TelemetryMetrics | null;
+  metricsHistory: MetricsHistory;
   agents: AgentStatusItem[];
   incidents: Incident[];
   missionPatch: MissionPatch | null;
@@ -78,6 +109,7 @@ interface WorldStore {
   demoResetAt: string | null;
   setWorldState: (state: WorldState, version?: number | null, scenarioRunId?: string | null) => void;
   setTelemetry: (telemetry: TelemetrySnapshot) => void;
+  pushMetrics: (metrics: TelemetryMetrics) => void;
   setAgents: (agents: AgentStatusItem[]) => void;
   upsertAgent: (agent: AgentStatusItem) => void;
   setIncidents: (incidents: Incident[]) => void;
@@ -98,6 +130,8 @@ export const useWorldStore = create<WorldStore>()(
     worldVersion: null,
     scenarioRunId: null,
     telemetry: initialTelemetry,
+    metrics: null,
+    metricsHistory: emptyHistory(),
     agents: [],
     incidents: [],
     missionPatch: null,
@@ -113,6 +147,15 @@ export const useWorldStore = create<WorldStore>()(
     setWorldState: (worldState, worldVersion = null, scenarioRunId = null) =>
       set({ worldState, worldVersion, scenarioRunId }),
     setTelemetry: (telemetry) => set({ telemetry }),
+    pushMetrics: (metrics) =>
+      set((state) => {
+        const history = { ...state.metricsHistory };
+        (Object.keys(metrics) as MetricKey[]).forEach((key) => {
+          const next = state.metricsHistory[key].concat(metrics[key]);
+          history[key] = next.length > HISTORY_LEN ? next.slice(next.length - HISTORY_LEN) : next;
+        });
+        return { metrics, metricsHistory: history };
+      }),
     setAgents: (agents) => set({ agents }),
     upsertAgent: (agent) =>
       set((state) => {

@@ -1,7 +1,7 @@
 import { useWorldStore } from "../store/worldStore";
 import type { AgentStatusItem } from "../types/backend";
 
-const fallbackAgents: AgentStatusItem[] = [
+export const fallbackAgents: AgentStatusItem[] = [
   {
     agent: "workload_agent",
     display_name: "Workload Agent",
