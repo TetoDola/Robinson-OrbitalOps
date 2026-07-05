@@ -1167,6 +1167,52 @@ button:focus-visible,
   font-size: 10px;
 }
 
+.sim-ir-camera {
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: oklch(4% 0.012 146 / 0.3);
+}
+
+.sim-ir-head,
+.sim-ir-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.sim-ir-head {
+  margin-bottom: 7px;
+}
+
+.sim-ir-head .eyebrow {
+  grid-column: 1 / -1;
+}
+
+.sim-ir-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.sim-ir-head b,
+.sim-ir-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.sim-ir-meta {
+  margin-top: 7px;
+  color: var(--dim);
+}
+
 .sim-result {
   margin: 8px 0 0;
   text-transform: uppercase;

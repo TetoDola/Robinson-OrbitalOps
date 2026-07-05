@@ -12,6 +12,7 @@ import type {
   MissionPatch,
   MissionPatchAction,
   NodeState,
+  ProcessedRadiationRisk,
   ThermalVisualInput,
   WorldState,
 } from "../types/backend";
@@ -275,7 +276,25 @@ function yesNo(value: boolean | undefined): string {
   return value ? "yes" : "no";
 }
 
-function buildSignalRows(agentName: string, worldState: WorldState | null, openFindings: number, commandCount: number): SignalRow[] {
+function radiationTone(radiationRisk: ProcessedRadiationRisk | null, fallbackRisk: string | undefined): Tone {
+  const level = String(radiationRisk?.radiationLevel ?? fallbackRisk ?? "").toUpperCase();
+  if (level === "CRITICAL" || level === "HIGH") return "critical";
+  if (level === "MEDIUM" || level === "ELEVATED") return "warn";
+  return "nominal";
+}
+
+function radiationRiskValue(radiationRisk: ProcessedRadiationRisk | null, fallbackRisk: string | undefined): string {
+  if (!radiationRisk) return fallbackRisk ?? "--";
+  return `${radiationRisk.radiationLevel} ${Math.round(radiationRisk.radiationRiskScore)}`;
+}
+
+function buildSignalRows(
+  agentName: string,
+  worldState: WorldState | null,
+  radiationRisk: ProcessedRadiationRisk | null,
+  openFindings: number,
+  commandCount: number,
+): SignalRow[] {
   const nodeA = findNode(worldState, "node-a");
   const nodeB = findNode(worldState, "node-b");
   const nodeC = findNode(worldState, "node-c");
@@ -304,9 +323,10 @@ function buildSignalRows(agentName: string, worldState: WorldState | null, openF
       ];
     case "radiation_integrity_agent":
       return [
+        { label: "model risk", value: radiationRiskValue(radiationRisk, worldState?.radiation.risk), limit: ">=HIGH", tone: radiationTone(radiationRisk, worldState?.radiation.risk) },
+        { label: "main driver", value: radiationRisk?.mainCause ?? worldState?.radiation.region ?? "--" },
         { label: "ecc last 5 min", value: String(worldState?.radiation.ecc_errors_last_5min ?? "--"), limit: ">900", tone: (worldState?.radiation.ecc_errors_last_5min ?? 0) > 900 ? "critical" : "nominal" },
         { label: "xid event", value: yesNo(worldState?.radiation.xid_event), limit: "any true", tone: worldState?.radiation.xid_event ? "critical" : "nominal" },
-        { label: "loss state", value: worldState?.training.loss_state ?? "--", tone: worldState?.training.loss_state?.includes("nan") ? "critical" : "nominal" },
         { label: "checkpoint", value: worldState?.training.latest_checkpoint_status ?? "--", tone: worldState?.training.latest_checkpoint_status === "suspect" ? "critical" : "nominal" },
       ];
     case "checkpoint_downlink_agent":
@@ -409,6 +429,7 @@ interface AgentDetailModalProps {
   approvalBusy: boolean;
   linkedPatchId?: string | null;
   worldState: WorldState | null;
+  radiationRisk: ProcessedRadiationRisk | null;
   runtime?: AgentRuntimeItem;
   openFindingCount: number;
   commandCount: number;
@@ -431,6 +452,7 @@ function AgentDetailModal({
   approvalBusy,
   linkedPatchId,
   worldState,
+  radiationRisk,
   runtime,
   openFindingCount,
   commandCount,
@@ -444,7 +466,7 @@ function AgentDetailModal({
     : patchActions.map((action) => String(action.type));
   const evidence = latestFinding?.evidence?.length ? latestFinding.evidence : [agent.message];
   const assets = latestFinding?.affected_assets?.length ? latestFinding.affected_assets : [];
-  const signalRows = buildSignalRows(agent.agent, worldState, openFindingCount, relatedCommands.length || commandCount);
+  const signalRows = buildSignalRows(agent.agent, worldState, radiationRisk, openFindingCount, relatedCommands.length || commandCount);
   const nextRunSeconds = secondsUntil(runtime?.next_run_at, nowMs);
   const thermalInput: ThermalVisualInput | null =
     agent.agent === "thermal_physical_agent" ? (worldState?.thermal.latest_visual_input ?? null) : null;
@@ -784,6 +806,7 @@ export default function AgentStatus() {
   const setPatchMode = useWorldStore((state) => state.setPatchMode);
   const commands = useWorldStore((state) => state.commands);
   const worldState = useWorldStore((state) => state.worldState);
+  const radiationRisk = useWorldStore((state) => state.radiationRisk);
   const agentLogs = useWorldStore((state) => state.agentLogs);
   const visibleAgents = agents.length > 0 ? agents : fallbackAgents;
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -882,6 +905,7 @@ export default function AgentStatus() {
               relatedIncident={relatedIncident}
               activityLog={agentLogs[selectedAgent.agent] ?? []}
               worldState={worldState}
+              radiationRisk={radiationRisk}
               runtime={agentRuntime.find((item) => item.agent === selectedAgent.agent)}
               openFindingCount={openFindingCount}
               commandCount={commands.length}

@@ -6,7 +6,11 @@ function riskClass(kind: "battery" | "eclipse" | "radiation" | "ecc" | "checkpoi
   const normalized = value.toLowerCase();
   if (kind === "ecc") return normalized.includes("rising") ? "risk-row is-hot" : "risk-row is-info";
   if (kind === "checkpoint") return normalized.includes("suspect") || normalized.includes("invalid") ? "risk-row is-hot" : "risk-row is-info";
-  if (kind === "radiation") return normalized.includes("elevated") || normalized.includes("high") ? "risk-row is-warn" : "risk-row is-info";
+  if (kind === "radiation") {
+    return ["elevated", "medium", "high", "critical"].some((token) => normalized.includes(token))
+      ? "risk-row is-warn"
+      : "risk-row is-info";
+  }
   if (kind === "battery") return Number.parseFloat(value) < 45 ? "risk-row is-warn" : "risk-row is-info";
   if (kind === "eclipse") return Number.parseFloat(value) < 15 ? "risk-row is-warn" : "risk-row is-info";
   if (kind === "downlink") {
@@ -28,6 +32,7 @@ export default function TelemetryPanel() {
   const worldVersion = useWorldStore((state) => state.worldVersion);
   const scenarioRunId = useWorldStore((state) => state.scenarioRunId);
   const demoResetAt = useWorldStore((state) => state.demoResetAt);
+  const missionPatch = useWorldStore((state) => state.missionPatch);
 
   return (
     <aside className="left-rail" aria-label="Overview">
@@ -111,7 +116,7 @@ export default function TelemetryPanel() {
           <span>Time to eclipse</span>
           <strong>{telemetry.eclipse}</strong>
         </div>
-        <div className={riskClass("radiation", telemetry.radiation)}>
+        <div className={riskClass("radiation", telemetry.radiation)} title={telemetry.radiationExplanation}>
           <span>Radiation risk</span>
           <strong>{telemetry.radiation}</strong>
         </div>
@@ -161,7 +166,7 @@ export default function TelemetryPanel() {
       </section>
 
       <div className="rail-footer">
-        <span>{demoResetAt ? "baseline reset" : "human approval required"}</span>
+        <span>{missionPatch ? "human approval required" : demoResetAt ? "baseline reset" : "monitoring"}</span>
       </div>
     </aside>
   );

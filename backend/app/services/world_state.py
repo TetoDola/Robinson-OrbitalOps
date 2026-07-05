@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.constants import CANONICAL_WORLD_STATE, DEMO_SCENARIO_RUN_ID
+from app.constants import DEMO_BASELINE_WORLD_STATE, DEMO_SCENARIO_RUN_ID
 from app.db.models import WorldStateCurrent, WorldStateSnapshot
 
 
@@ -42,7 +42,7 @@ async def write_world_state(
             id=True,
             scenario_run_id=DEMO_SCENARIO_RUN_ID,
             version=1,
-            state=merge_state(CANONICAL_WORLD_STATE, state_patch),
+            state=merge_state(DEMO_BASELINE_WORLD_STATE, state_patch),
             updated_by=updated_by,
             updated_at=now,
         )

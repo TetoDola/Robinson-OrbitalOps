@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     local_gpu_telemetry_enabled: bool = False
     local_gpu_node_id: str = "node-local"
     local_gpu_asset_id: str = "gpu-local-0"
+    orbitops_radiation_source: str = "auto"
+    orbitops_radiation_cache_seconds: int = 60
+    orbitops_radiation_timeout_seconds: float = 2.5
 
     model_config = SettingsConfigDict(
         env_prefix="",

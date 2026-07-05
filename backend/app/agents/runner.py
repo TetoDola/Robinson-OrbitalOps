@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+from app.agents.data_context import read_current_agent_state
 from app.agents.commander_agent import build_phase3_patch
 from app.agents.domain_agents import emit_phase4_heartbeats_once, run_remaining_agents_once
 from app.agents.power_orbit_agent import run_once as run_power_orbit_once
@@ -33,11 +34,15 @@ async def process_once() -> bool:
         )
         if not messages:
             return False
-        stream_name, stream_messages = messages[0]
-        message_id, _fields = stream_messages[0]
+    stream_name, stream_messages = messages[0]
+    message_id, _fields = stream_messages[0]
 
-    finding = await run_power_orbit_once()
-    remaining_findings = await run_remaining_agents_once()
+    agent_state = await read_current_agent_state()
+    finding = None
+    remaining_findings = []
+    if agent_state is not None:
+        finding = await run_power_orbit_once(agent_state)
+        remaining_findings = await run_remaining_agents_once(agent_state)
     if finding is not None or remaining_findings:
         await build_phase3_patch()
 

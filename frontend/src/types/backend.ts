@@ -39,6 +39,7 @@ export interface ThermalVisualInput {
 }
 
 export interface ThermalModelResult {
+  audit_verdict?: "pass" | "warn" | "fail" | string;
   summary?: string;
   confidence?: number | null;
   affected_assets?: string[];
@@ -56,6 +57,7 @@ export interface RadiationState {
   region: string;
   ecc_errors_last_5min: number;
   xid_event: boolean;
+  computed_risk?: Record<string, unknown>;
 }
 
 export type RadiationLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";

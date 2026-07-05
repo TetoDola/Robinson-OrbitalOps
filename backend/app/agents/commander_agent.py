@@ -7,7 +7,8 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.constants import CANONICAL_WORLD_STATE, DEMO_SCENARIO_RUN_ID, CommandType, StreamName
+from app.agents.data_context import enrich_agent_world_state
+from app.constants import DEMO_BASELINE_WORLD_STATE, DEMO_SCENARIO_RUN_ID, CommandType, StreamName
 from app.core.safety import SafetyResult, validate_mission_patch
 from app.db.models import AgentFinding, Incident, MissionPatch, WorldStateCurrent
 from app.db.session import session_context
@@ -101,7 +102,8 @@ async def build_commander_patch() -> MissionPatch | None:
     updated_patch: MissionPatch | None = None
     async with session_context() as session:
         world_state_row = await _current_world_state(session)
-        world_state = world_state_row.state if world_state_row is not None else CANONICAL_WORLD_STATE
+        raw_world_state = world_state_row.state if world_state_row is not None else DEMO_BASELINE_WORLD_STATE
+        world_state = await enrich_agent_world_state(raw_world_state)
         findings = await _open_findings(session)
         await emit_agent_status(
             session,
@@ -400,4 +402,4 @@ def _affected_assets(findings: list[AgentFinding | dict[str, Any]]) -> list[str]
     return assets or ["orbital-dc-01"]
 
 
-PATCH_ACTIONS = build_mission_patch_actions(CANONICAL_WORLD_STATE, [])
+PATCH_ACTIONS = build_mission_patch_actions(DEMO_BASELINE_WORLD_STATE, [])

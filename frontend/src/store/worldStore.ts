@@ -50,19 +50,19 @@ export const initialTelemetry: TelemetrySnapshot = {
   groundTrack: "ground track resolving",
   computeLoad: "--",
   latency: "--",
-  battery: "38%",
-  solar: "1.2 kW",
-  eclipse: "11 min",
-  radiation: "Elevated",
-  eccTrend: "Rising",
+  battery: "62%",
+  solar: "11.4 kW",
+  eclipse: "31 min",
+  radiation: "Nominal",
+  eccTrend: "Nominal",
   trustedCheckpoint: "ckpt-184500",
-  latestCheckpoint: "ckpt-184900 suspect",
-  downlink: "22 GB / 180 GB",
+  latestCheckpoint: "ckpt-184500 trusted",
+  downlink: "180 GB / 180 GB",
   rackHealth: "nominal",
   rackHealthTone: "yellow",
   groundLink: "Zurich-03",
-  orbitPhase: "approaching eclipse",
-  patchConfidence: "87%",
+  orbitPhase: "sunlight",
+  patchConfidence: "monitoring",
 };
 
 export interface WorkflowEventItem {
@@ -160,7 +160,11 @@ export const useWorldStore = create<WorldStore>()(
       set({ worldState, worldVersion, scenarioRunId }),
     setTelemetry: (telemetry) => set({ telemetry }),
     setRadiationRisk: (radiationRisk) => set({ radiationRisk }),
-    setAgents: (agents) => set({ agents }),
+    setAgents: (agents) =>
+      set((state) => ({
+        agents,
+        agentLogs: seedAgentStatusLogs(state.agentLogs, agents),
+      })),
     upsertAgent: (agent) =>
       set((state) => {
         const agents = state.agents.filter((item) => item.agent !== agent.agent);
@@ -256,17 +260,15 @@ export const useWorldStore = create<WorldStore>()(
                   logStatus,
                 )
               : state.workflowEvents,
-            agentLogs: shouldLog
-              ? agentLogEntry(
-                  state.agentLogs,
-                  event,
-                  [agent.agent],
-                  "Status updated",
-                  `${agent.phase}: ${agent.message}`,
-                  logStatus,
-                  { dedupeKey: `${event.type}:${agent.agent}:${event.timestamp}` },
-                )
-              : state.agentLogs,
+            agentLogs: agentLogEntry(
+              state.agentLogs,
+              event,
+              [agent.agent],
+              "Agent run",
+              `${agent.phase}: ${agent.message}`,
+              logStatus,
+              { dedupeKey: `${event.type}:${agent.agent}:${event.timestamp}` },
+            ),
             lastEvent: event,
             lastEventAt: event.timestamp,
           };
@@ -711,6 +713,25 @@ function appendAgentLogItem(existing: Record<string, AgentLogItem[]>, log: Agent
     ...existing,
     [log.agent]: [log, ...(existing[log.agent] ?? []).filter((item) => item.id !== log.id)].slice(0, 48),
   };
+}
+
+function seedAgentStatusLogs(
+  existing: Record<string, AgentLogItem[]>,
+  agents: AgentStatusItem[],
+): Record<string, AgentLogItem[]> {
+  return agents.reduce((logs, agent) => {
+    const timestamp = agent.updated_at ?? new Date().toISOString();
+    return appendAgentLogItem(logs, {
+      id: `agent.status.snapshot:${agent.agent}:${timestamp}:${agent.phase}:${agent.status}`,
+      agent: agent.agent,
+      time: timestamp,
+      label: "Agent run",
+      detail: `${agent.phase}: ${agent.message}`,
+      status: agentEventStatus(agent),
+      eventType: "agent.status.snapshot",
+      missionPatchId: agent.linked_mission_patch_id ?? undefined,
+    });
+  }, existing);
 }
 
 function agentLogEntry(

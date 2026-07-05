@@ -19,6 +19,7 @@ from app.agents.domain_agents import (
     build_vibration_finding,
     build_workload_finding,
 )
+from app.agents.data_context import enrich_agent_world_state
 from app.agents.power_orbit_agent import build_power_orbit_finding
 from app.config import settings
 from app.constants import DEMO_BASELINE_WORLD_STATE, DEMO_SCENARIO_NAME, DEMO_SCENARIO_RUN_ID, StreamName
@@ -232,8 +233,9 @@ async def inject_thermal_frame(request: SimulatorInjectRequest) -> SimulatorInje
 
 async def _run_builders(state: dict[str, Any], builders: list[FindingBuilder]) -> list[str]:
     finding_ids: list[str] = []
+    agent_state = await enrich_agent_world_state(state)
     for builder in builders:
-        payload = builder(state)
+        payload = builder(agent_state)
         if payload is None:
             continue
         finding = await _persist_finding(payload)

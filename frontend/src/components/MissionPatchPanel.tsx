@@ -7,12 +7,21 @@ import {
 
 import { approveMissionPatch, rejectMissionPatch } from "../api/client";
 import { useWorldStore, type PatchMode } from "../store/worldStore";
-import type { Incident, MissionPatchAction, NodeState } from "../types/backend";
+import type { MissionPatchAction, NodeState } from "../types/backend";
 import AgentStatus from "./AgentStatus";
 import IRCamPopup, { type IrNodeTarget } from "./IRCamPopup";
 import SimulationControls from "./SimulationControls";
 
-const rackPatterns = [
+const nominalRackPatterns = [
+  ["active", "compute", "compute", "active", "compute", "compute", "active", "compute"],
+  ["compute", "compute", "active", "active", "compute", "compute", "active", "active"],
+  ["active", "active", "compute", "compute", "active", "compute", "active", "compute"],
+  ["compute", "active", "active", "compute", "compute", "active", "compute", "active"],
+  ["active", "compute", "compute", "compute", "active", "compute", "active", "compute"],
+  ["compute", "compute", "active", "active", "compute", "active", "compute", "active"],
+];
+
+const incidentRackPatterns = [
   ["active", "compute", "compute", "active", "compute", "hot", "active", "compute"],
   ["compute", "compute", "active", "active", "compute", "compute", "active", "active"],
   ["active", "active", "compute", "compute", "hot", "compute", "active", "compute"],
@@ -21,60 +30,11 @@ const rackPatterns = [
   ["compute", "compute", "active", "hot", "compute", "active", "compute", "active"],
 ];
 
-const fallbackActions = [
-  "Mark ckpt-184900 as suspect and preserve evidence.",
-  "Roll back critical training to ckpt-184500.",
-  "Cordon Node B GPU 3 from critical training.",
-  "Mark Node C unavailable until thermal verification passes.",
-  "Reduce Node A GPU power limit to 70% before eclipse.",
-  "Send manifest, hashes, logs, and delta checkpoint first.",
-  "Run canary eval and distributed health check before resume.",
-];
-
 const fallbackNodeRows = [
-  { id: "Node A", desc: "Critical training, reduced-power safe mode", status: "degraded", cls: "node-state status-orange", tempC: 71.2 },
-  { id: "Node B", desc: "Free GPUs, ECC rising on GPU 3", status: "unsafe", cls: "node-state status-red", tempC: 84.6 },
-  { id: "Node C", desc: "IR hotspot confirmed while idle", status: "unsafe", cls: "node-state status-red", tempC: 96.4 },
-  { id: "Node D", desc: "Standby pool available for canary eval", status: "healthy", cls: "node-state", tempC: 52.1 },
-];
-
-const fallbackIncidents: Incident[] = [
-  {
-    id: "power-orbit",
-    incident_key: "power-orbit",
-    title: "Power / Orbit Agent",
-    severity: "ORANGE",
-    status: "active",
-    finding_ids: [],
-    summary: "Eclipse in 11 min, battery reserve low",
-  },
-  {
-    id: "integrity",
-    incident_key: "integrity",
-    title: "Integrity Agent",
-    severity: "RED",
-    status: "active",
-    finding_ids: [],
-    summary: "ECC spike on Node B GPU 3 before ckpt-184900",
-  },
-  {
-    id: "thermal",
-    incident_key: "thermal",
-    title: "Thermal Agent",
-    severity: "RED",
-    status: "active",
-    finding_ids: [],
-    summary: "IR hotspot on Node C while idle",
-  },
-  {
-    id: "commander",
-    incident_key: "commander",
-    title: "Commander Agent",
-    severity: "RED",
-    status: "approval",
-    finding_ids: [],
-    summary: "Mission Patch patch-042 ready",
-  },
+  { id: "Node A", desc: "Training worker nominal", status: "healthy", cls: "node-state", tempC: 61.2 },
+  { id: "Node B", desc: "Integrity counters nominal", status: "healthy", cls: "node-state", tempC: 58.4 },
+  { id: "Node C", desc: "Cooling loop nominal", status: "healthy", cls: "node-state", tempC: 60.1 },
+  { id: "Node D", desc: "Standby pool available", status: "healthy", cls: "node-state", tempC: 52.1 },
 ];
 
 function humanize(value: string): string {
@@ -152,7 +112,8 @@ function shortPatchId(id: string): string {
   return id.length > 12 ? `patch-${id.slice(0, 8)}` : id;
 }
 
-function RackDiagram() {
+function RackDiagram({ hasIssue }: { hasIssue: boolean }) {
+  const rackPatterns = hasIssue ? incidentRackPatterns : nominalRackPatterns;
   return (
     <div className="rack-shell" aria-hidden="true">
       {rackPatterns.map((slots, rackIndex) => (
@@ -178,6 +139,7 @@ export default function MissionPatchPanel() {
   const worldState = useWorldStore((state) => state.worldState);
   const incidents = useWorldStore((state) => state.incidents);
   const resetIdle = !missionPatch && incidents.length === 0;
+  const latestThermalInput = worldState?.thermal.latest_visual_input ?? null;
   const [irView, setIrView] = useState<{ node: IrNodeTarget; anchor: { x: number; y: number } } | null>(null);
 
   useEffect(() => {
@@ -209,18 +171,16 @@ export default function MissionPatchPanel() {
     };
   }
 
-  const actions = missionPatch?.actions?.length
-    ? missionPatch.actions.map(actionLabel)
-    : resetIdle
-      ? []
-      : fallbackActions;
+  const actions = missionPatch?.actions?.length ? missionPatch.actions.map(actionLabel) : [];
   const nodes = worldState?.nodes ?? [];
-  const visibleIncidents = incidents.length > 0 ? incidents : resetIdle ? [] : fallbackIncidents;
+  const visibleIncidents = incidents;
+  const maxNodeTemp = nodes.reduce((max, node) => Math.max(max, node.temp_c ?? 0), 0);
+  const hasIssue = Boolean(missionPatch || visibleIncidents.length > 0 || maxNodeTemp >= 80);
   const title = missionPatch
     ? `${shortPatchId(missionPatch.id)}: protect training integrity`
     : resetIdle
       ? "no active mission patch"
-      : "patch-042: protect training integrity";
+      : "incident under review";
   const assetStateLabel = resetIdle ? "monitoring" : missionPatch ? "review required" : "attention";
   const operatorLabel = resetIdle ? "standby" : missionPatch?.status === "pending_approval" ? "approve or replan" : humanize(missionPatch?.status ?? "review");
   const approvalMode = resetIdle ? "Monitoring" : "Human approval";
@@ -296,7 +256,7 @@ export default function MissionPatchPanel() {
           {missionPatch?.summary ??
             (resetIdle
               ? "Agents are monitoring the reset baseline. No recovery patch is awaiting approval."
-              : "ECC escalation, Node C thermal anomaly, power drop, and limited downlink make the latest checkpoint unsafe for automatic continuation.")}
+              : "An incident is open. Waiting for Commander to assemble a validated mission patch.")}
         </p>
         <ol className="patch-action-list">
           {actions.slice(0, 5).map((action) => (
@@ -349,7 +309,7 @@ export default function MissionPatchPanel() {
             <strong className={`status-${telemetry.rackHealthTone}`}>{telemetry.rackHealth}</strong>
           </div>
         </div>
-        <RackDiagram />
+        <RackDiagram hasIssue={hasIssue} />
       </section>
 
       <section className="rail-section" aria-label="Node operating state">
@@ -384,7 +344,14 @@ export default function MissionPatchPanel() {
                 </li>
               ))}
         </ul>
-        {irView ? <IRCamPopup anchor={irView.anchor} node={irView.node} onClose={() => setIrView(null)} /> : null}
+        {irView ? (
+          <IRCamPopup
+            anchor={irView.anchor}
+            node={irView.node}
+            sourceImageUrl={latestThermalInput?.asset_id === irView.node.id ? latestThermalInput.image_data_url : null}
+            onClose={() => setIrView(null)}
+          />
+        ) : null}
       </section>
 
       <section className="rail-section incidents-panel" aria-label="Active incidents">

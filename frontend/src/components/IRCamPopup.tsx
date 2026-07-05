@@ -12,7 +12,14 @@ export interface IrNodeTarget {
 interface IRCamPopupProps {
   node: IrNodeTarget;
   anchor: { x: number; y: number };
+  sourceImageUrl?: string | null;
   onClose: () => void;
+}
+
+interface IRCameraCanvasProps {
+  node: IrNodeTarget;
+  sourceImageUrl?: string | null;
+  className?: string;
 }
 
 const IR_W = 320;
@@ -56,18 +63,21 @@ function getIronbowLut(): Uint8ClampedArray {
   return lut;
 }
 
-let boardImagePromise: Promise<HTMLImageElement | null> | null = null;
+const imagePromises = new Map<string, Promise<HTMLImageElement | null>>();
 
-function loadBoardImage(): Promise<HTMLImageElement | null> {
-  if (!boardImagePromise) {
-    boardImagePromise = new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = b200Url;
-    });
+function loadImage(source: string): Promise<HTMLImageElement | null> {
+  const cached = imagePromises.get(source);
+  if (cached) {
+    return cached;
   }
-  return boardImagePromise;
+  const promise = new Promise<HTMLImageElement | null>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = source;
+  });
+  imagePromises.set(source, promise);
+  return promise;
 }
 
 function gauss(x: number, y: number, cx: number, cy: number, sx: number, sy: number) {
@@ -76,11 +86,6 @@ function gauss(x: number, y: number, cx: number, cy: number, sx: number, sy: num
   return Math.exp(-(dx * dx + dy * dy));
 }
 
-/**
- * Static per-node heat field in [0,1]: board luminance gives the structural
- * detail, gaussian lobes model the die, HBM ring, VRM columns, and edge
- * connector. Per-frame sensor noise is added at draw time.
- */
 function buildHeatField(image: HTMLImageElement | null, severity: number): Float32Array {
   const heat = new Float32Array(IR_W * IR_H);
   let lum: Float32Array | null = null;
@@ -156,7 +161,7 @@ function drawOverlay(ctx: CanvasRenderingContext2D, spotTempC: number, elapsedS:
   ctx.strokeRect(cx - 2.5, cy - 2.5, 5, 5);
 
   ctx.font = "11px 'Geist Mono', Consolas, monospace";
-  const label = `${spotTempC.toFixed(1)}°C MAX`;
+  const label = `${spotTempC.toFixed(1)}\u00b0C MAX`;
   const textWidth = ctx.measureText(label).width;
   ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
   ctx.fillRect(cx + 16, cy - 19, textWidth + 10, 16);
@@ -181,8 +186,64 @@ function drawOverlay(ctx: CanvasRenderingContext2D, spotTempC: number, elapsedS:
   ctx.fillText("IR-01 9Hz NR", 12, 20);
 }
 
-export default function IRCamPopup({ node, anchor, onClose }: IRCamPopupProps) {
+export function IRCameraCanvas({ node, sourceImageUrl, className = "ir-canvas" }: IRCameraCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) {
+      return undefined;
+    }
+
+    const severity = Math.min(1, Math.max(0, (node.tempC - 45) / 50));
+    const lut = getIronbowLut();
+    const frame = ctx.createImageData(IR_W, IR_H);
+    const px = frame.data;
+    let heat: Float32Array | null = null;
+    let timer = 0;
+    let cancelled = false;
+    const startedAt = performance.now();
+
+    const render = () => {
+      if (!heat) {
+        return;
+      }
+      const elapsedS = (performance.now() - startedAt) / 1000;
+      const flicker = Math.sin(elapsedS * 2.4) * 0.012;
+      for (let i = 0; i < heat.length; i += 1) {
+        const v = heat[i] + (Math.random() - 0.5) * 0.045 + flicker;
+        const idx = (v <= 0 ? 0 : v >= 1 ? 255 : (v * 255) | 0) * 3;
+        const p = i * 4;
+        px[p] = lut[idx];
+        px[p + 1] = lut[idx + 1];
+        px[p + 2] = lut[idx + 2];
+        px[p + 3] = 255;
+      }
+      ctx.putImageData(frame, 0, 0);
+      const spotTemp = node.tempC + Math.sin(elapsedS * 1.7) * 0.3 + (Math.random() - 0.5) * 0.2;
+      drawOverlay(ctx, spotTemp, elapsedS);
+    };
+
+    void loadImage(sourceImageUrl || b200Url).then((image) => {
+      if (cancelled) {
+        return;
+      }
+      heat = buildHeatField(image, severity);
+      render();
+      timer = window.setInterval(render, FRAME_MS);
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [node.id, node.tempC, sourceImageUrl]);
+
+  return <canvas className={className} height={IR_H} ref={canvasRef} width={IR_W} />;
+}
+
+export default function IRCamPopup({ node, anchor, sourceImageUrl, onClose }: IRCamPopupProps) {
   const popupRef = useRef<HTMLDivElement | null>(null);
 
   const style = useMemo(() => {
@@ -225,57 +286,6 @@ export default function IRCamPopup({ node, anchor, onClose }: IRCamPopupProps) {
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [onClose]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) {
-      return undefined;
-    }
-
-    const severity = Math.min(1, Math.max(0, (node.tempC - 45) / 50));
-    const lut = getIronbowLut();
-    const frame = ctx.createImageData(IR_W, IR_H);
-    const px = frame.data;
-    let heat: Float32Array | null = null;
-    let timer = 0;
-    let cancelled = false;
-    const startedAt = performance.now();
-
-    const render = () => {
-      if (!heat) {
-        return;
-      }
-      const elapsedS = (performance.now() - startedAt) / 1000;
-      const flicker = Math.sin(elapsedS * 2.4) * 0.012;
-      for (let i = 0; i < heat.length; i += 1) {
-        const v = heat[i] + (Math.random() - 0.5) * 0.045 + flicker;
-        const idx = (v <= 0 ? 0 : v >= 1 ? 255 : (v * 255) | 0) * 3;
-        const p = i * 4;
-        px[p] = lut[idx];
-        px[p + 1] = lut[idx + 1];
-        px[p + 2] = lut[idx + 2];
-        px[p + 3] = 255;
-      }
-      ctx.putImageData(frame, 0, 0);
-      const spotTemp = node.tempC + Math.sin(elapsedS * 1.7) * 0.3 + (Math.random() - 0.5) * 0.2;
-      drawOverlay(ctx, spotTemp, elapsedS);
-    };
-
-    void loadBoardImage().then((image) => {
-      if (cancelled) {
-        return;
-      }
-      heat = buildHeatField(image, severity);
-      render();
-      timer = window.setInterval(render, FRAME_MS);
-    });
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [node.id, node.tempC]);
-
   return createPortal(
     <>
       <div className="ir-popup" ref={popupRef} style={style} role="dialog" aria-label={`IR thermal view of ${node.id}`}>
@@ -292,7 +302,7 @@ export default function IRCamPopup({ node, anchor, onClose }: IRCamPopupProps) {
             &times;
           </button>
         </div>
-        <canvas className="ir-canvas" height={IR_H} ref={canvasRef} width={IR_W} />
+        <IRCameraCanvas node={node} sourceImageUrl={sourceImageUrl} />
         <div className="ir-scale" aria-label="Temperature scale">
           <span>{AMBIENT_C.toFixed(0)}&deg;C</span>
           <span className="ir-scale-bar" />

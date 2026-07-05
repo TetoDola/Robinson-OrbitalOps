@@ -1,0 +1,17 @@
+{
+  "sourceMode": "mock",
+  "generatedAt": "2026-07-04T10:15:00Z",
+  "solarWind": {
+    "speedKms": 510,
+    "densityPcc": 8.2,
+    "btNt": 8.7,
+    "bzNt": -4.1
+  },
+  "xrayFluxWattsM2": 0.0000021,
+  "protonFluxPfu": 3.4,
+  "kpIndex": 4.33,
+  "protonEvent": false,
+  "sources": [
+    "backend/data/radiation-environment.mock.json"
+  ]
+}

@@ -1,4 +1,4 @@
-"""Remaining mock domain agents for Phase 4."""
+"""Remaining domain agents for Phase 4."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.constants import DEMO_SCENARIO_RUN_ID, StreamName
-from app.db.models import AgentFinding, AgentStatus, WorldStateCurrent
+from app.db.models import AgentFinding, AgentStatus
 from app.db.session import session_context
+from app.agents.data_context import read_current_agent_state
 from app.services.agent_status import emit_agent_status
 from app.services.event_bus import publish_stream_event
 
@@ -49,19 +50,36 @@ def build_thermal_finding(state: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def build_radiation_finding(state: dict[str, Any]) -> dict[str, Any] | None:
-    if state["radiation"]["ecc_errors_last_5min"] > 900:
-        return _finding(
-            "radiation_integrity_agent",
-            "RED",
-            0.86,
-            ["node-b", "ckpt-184900"],
-            "ECC errors spiked during a suspect checkpoint window.",
-            ["ECC count exceeds 900", "Xid event observed", "Latest checkpoint is suspect"],
-            "Latest checkpoint may contain corrupted training state.",
-            ["mark_checkpoint_suspect", "cordon_node", "run_health_check"],
-            "radiation_checkpoint_integrity",
-        )
-    return None
+    radiation = state.get("radiation") or {}
+    training = state.get("training") or {}
+    computed = radiation.get("computed_risk") or {}
+    ecc_errors = _number(radiation.get("ecc_errors_last_5min")) or 0
+    xid_event = bool(radiation.get("xid_event"))
+    latest_checkpoint = str(training.get("latest_checkpoint") or "latest checkpoint")
+    checkpoint_status = str(training.get("latest_checkpoint_status") or "unknown")
+    loss_state = str(training.get("loss_state") or "")
+    computed_score = _number(computed.get("radiationRiskScore"))
+    computed_level = str(computed.get("radiationLevel") or "").upper()
+    model_high = computed_level in {"HIGH", "CRITICAL"} or (computed_score is not None and computed_score >= 62)
+    integrity_signal = ecc_errors > 900 or xid_event or checkpoint_status == "suspect" or "nan" in loss_state.lower()
+
+    if not (ecc_errors > 900 or (model_high and integrity_signal)):
+        return None
+
+    affected_assets = _radiation_affected_assets(state, latest_checkpoint)
+    evidence = _radiation_evidence(radiation, training, computed)
+    confidence = max(0.82, min(0.95, 0.74 + ((computed_score or ecc_errors / 12) / 500)))
+    return _finding(
+        "radiation_integrity_agent",
+        "RED" if ecc_errors > 900 or xid_event or computed_level == "CRITICAL" else "ORANGE",
+        round(confidence, 2),
+        affected_assets,
+        "Radiation and integrity data indicate checkpoint corruption risk.",
+        evidence,
+        f"{latest_checkpoint} may contain corrupted training state.",
+        ["mark_checkpoint_suspect", "cordon_node", "run_health_check"],
+        "radiation_checkpoint_integrity",
+    )
 
 
 def build_checkpoint_downlink_finding(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -114,13 +132,11 @@ PHASE4_AGENT_NAMES = [
 ]
 
 
-async def run_remaining_agents_once() -> list[AgentFinding]:
-    async with session_context() as session:
-        result = await session.execute(select(WorldStateCurrent).where(WorldStateCurrent.id.is_(True)))
-        world_state = result.scalar_one_or_none()
-        if world_state is None:
-            return []
-        payloads = [payload for builder in AGENT_BUILDERS if (payload := builder(world_state.state)) is not None]
+async def run_remaining_agents_once(state: dict[str, Any] | None = None) -> list[AgentFinding]:
+    agent_state = state if state is not None else await read_current_agent_state()
+    if agent_state is None:
+        return []
+    payloads = [payload for builder in AGENT_BUILDERS if (payload := builder(agent_state)) is not None]
 
     findings: list[AgentFinding] = []
     for payload in payloads:
@@ -252,3 +268,60 @@ def _finding(
         "finding_signature": signature,
         "scenario_time_bucket": "phase4-demo",
     }
+
+
+def _number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _radiation_affected_assets(state: dict[str, Any], latest_checkpoint: str) -> list[str]:
+    assets: list[str] = []
+    for node in state.get("nodes") or []:
+        if node.get("xid_event") or (_number(node.get("ecc_errors")) or 0) > 0:
+            node_id = node.get("id")
+            if isinstance(node_id, str):
+                assets.append(node_id)
+    assets.append(latest_checkpoint)
+    return _dedupe_strings(assets)
+
+
+def _radiation_evidence(
+    radiation: dict[str, Any],
+    training: dict[str, Any],
+    computed: dict[str, Any],
+) -> list[str]:
+    evidence: list[str] = []
+    if computed.get("available"):
+        score = computed.get("radiationRiskScore")
+        level = computed.get("radiationLevel")
+        if score is not None and level:
+            evidence.append(f"Computed radiation risk is {level} ({score}/100).")
+        if computed.get("mainCause"):
+            evidence.append(f"Dominant radiation driver is {computed['mainCause']}.")
+        if computed.get("sourceMode"):
+            evidence.append(f"Radiation model source mode is {computed['sourceMode']}.")
+
+    ecc_errors = _number(radiation.get("ecc_errors_last_5min")) or 0
+    evidence.append(f"ECC count is {round(ecc_errors)} in the last 5 minutes.")
+    if radiation.get("xid_event"):
+        evidence.append("Xid event observed.")
+    if training.get("latest_checkpoint_status"):
+        evidence.append(f"Latest checkpoint is {training['latest_checkpoint_status']}.")
+    if training.get("loss_state"):
+        evidence.append(f"Training loss state is {training['loss_state']}.")
+    return _dedupe_strings(evidence)
+
+
+def _dedupe_strings(values: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value.strip() or value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped

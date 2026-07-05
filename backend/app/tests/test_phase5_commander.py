@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import inspect
 
 from app.agents import commander_agent
@@ -14,11 +15,17 @@ from app.agents.domain_agents import (
 from app.agents.power_orbit_agent import build_power_orbit_finding
 from app.constants import CANONICAL_WORLD_STATE
 from app.core.safety import validate_mission_patch
-from app.simulator.state_machine import build_simulated_state
+
+
+def _incident_state() -> dict:
+    state = deepcopy(CANONICAL_WORLD_STATE)
+    state["thermal"]["highest_temp_c"] = 91
+    state["nodes"][2]["temp_c"] = 91
+    return state
 
 
 def _all_seed_findings() -> list[dict]:
-    state = build_simulated_state(5)
+    state = _incident_state()
     builders = [
         build_power_orbit_finding,
         build_workload_finding,

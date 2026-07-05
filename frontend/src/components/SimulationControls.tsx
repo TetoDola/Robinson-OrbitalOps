@@ -11,6 +11,7 @@ import {
   injectSimulatorIssue,
 } from "../api/client";
 import { useWorldStore } from "../store/worldStore";
+import { IRCameraCanvas, type IrNodeTarget } from "./IRCamPopup";
 
 const issueButtons = [
   { id: "thermal-frame", label: "Thermal frame", tone: "danger" },
@@ -28,6 +29,10 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("Unable to read image"));
     reader.readAsDataURL(file);
   });
+}
+
+function humanize(value: string): string {
+  return value.replace(/[_-]+/g, " ");
 }
 
 async function refreshBackendSnapshot() {
@@ -70,9 +75,22 @@ export default function SimulationControls() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aiStatus = useWorldStore((state) => state.aiStatus);
   const workflowEvents = useWorldStore((state) => state.workflowEvents);
+  const worldState = useWorldStore((state) => state.worldState);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [busyIssue, setBusyIssue] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string>("nominal baseline armed");
+  const latestThermalInput = worldState?.thermal.latest_visual_input ?? null;
+  const preferredNodeId =
+    latestThermalInput?.asset_id ??
+    (worldState?.thermal.hotspot_node && worldState.thermal.hotspot_node !== "none"
+      ? worldState.thermal.hotspot_node
+      : "node-c");
+  const thermalNode = worldState?.nodes.find((node) => node.id === preferredNodeId);
+  const irNode: IrNodeTarget = {
+    id: preferredNodeId,
+    status: thermalNode?.status ?? worldState?.thermal.cooling_status ?? "nominal",
+    tempC: thermalNode?.temp_c ?? worldState?.thermal.highest_temp_c ?? 62,
+  };
 
   async function injectIssue(issue: string) {
     setBusyIssue(issue);
@@ -181,6 +199,21 @@ export default function SimulationControls() {
           Select thermal image
         </button>
         <span>{selectedFile ? selectedFile.name : "sample frame if empty"}</span>
+      </div>
+
+      <div className="sim-ir-camera" aria-label="Simulated IR camera">
+        <div className="sim-ir-head">
+          <span className="eyebrow">ir camera</span>
+          <strong>{humanize(irNode.id)}</strong>
+          <b className={latestThermalInput ? "status-yellow" : "status-cyan"}>
+            {latestThermalInput ? humanize(latestThermalInput.analysis_status) : "standby"}
+          </b>
+        </div>
+        <IRCameraCanvas node={irNode} sourceImageUrl={latestThermalInput?.image_data_url} />
+        <div className="sim-ir-meta">
+          <span>{latestThermalInput?.source ?? "simulated feed"}</span>
+          <span>{irNode.tempC.toFixed(1)}&deg;C max</span>
+        </div>
       </div>
 
       <p className="sim-result">{lastResult}</p>

@@ -14,7 +14,9 @@ export default defineConfig({
       "/commands": apiTarget,
       "/incidents": apiTarget,
       "/mission-patches": apiTarget,
+      "/radiation-risk": apiTarget,
       "/simulator": apiTarget,
+      "/api": apiTarget,
       "/health": apiTarget,
       "/ws": {
         target: wsTarget,

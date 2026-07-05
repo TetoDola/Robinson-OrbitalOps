@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.agents.data_context import build_agent_world_state
 from app.constants import DEMO_SCENARIO_RUN_ID, StreamName
-from app.db.models import AgentFinding, WorldStateCurrent
+from app.db.models import AgentFinding
 from app.db.session import session_context
 from app.services.agent_status import emit_agent_status
 from app.services.event_bus import publish_stream_event
@@ -38,7 +39,7 @@ def build_power_orbit_finding(state: dict) -> dict | None:
     return None
 
 
-async def run_once() -> AgentFinding | None:
+async def run_once(state: dict | None = None) -> AgentFinding | None:
     async with session_context() as session:
         await emit_agent_status(
             session,
@@ -48,9 +49,8 @@ async def run_once() -> AgentFinding | None:
             severity="INFO",
             message="Reading latest orbital power state.",
         )
-        result = await session.execute(select(WorldStateCurrent).where(WorldStateCurrent.id.is_(True)))
-        world_state = result.scalar_one_or_none()
-        if world_state is None:
+        agent_state = state if state is not None else await build_agent_world_state(session)
+        if agent_state is None:
             await session.commit()
             return None
         await emit_agent_status(
@@ -61,7 +61,7 @@ async def run_once() -> AgentFinding | None:
             severity="INFO",
             message="Checking eclipse, battery, and checkpoint freshness.",
         )
-        finding_payload = build_power_orbit_finding(world_state.state)
+        finding_payload = build_power_orbit_finding(agent_state)
         if finding_payload is None:
             await emit_agent_status(
                 session,

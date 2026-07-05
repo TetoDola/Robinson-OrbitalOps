@@ -59,8 +59,8 @@ async def analyze_thermal_ir_image(
 
     Deterministic thresholds still decide the finding and executable actions.
     The model is used as a perception/evidence layer for image-specific detail:
-    visible hotspot pattern, likely affected asset, useful questions, and
-    operator-readable explanation.
+    visible hotspot pattern, likely affected asset, operator-readable
+    explanation, and follow-up questions only when the audit fails.
     """
     if not image_data_url.startswith("data:image/"):
         return None
@@ -74,10 +74,14 @@ async def analyze_thermal_ir_image(
                 "text": (
                     "You are the thermal/physical inspection sub-agent for an orbital GPU data center. "
                     "Analyze the attached thermal IR image against the current telemetry and finding. "
-                    "Return only a JSON object with keys: summary, confidence, affected_assets, evidence, "
-                    "risk, recommended_actions, questions, needs_human_review. "
-                    "Keep recommendations within this allowlist: mark_node_suspect, set_gpu_power_limit, "
-                    "run_health_check, snapshot_evidence. Do not invent assets outside the telemetry.\n\n"
+                    "Return only a JSON object with keys: audit_verdict, summary, confidence, affected_assets, "
+                    "evidence, risk, recommended_actions, questions, needs_human_review. audit_verdict must be "
+                    "pass, warn, or fail. Use fail only when the image or telemetry does not support the "
+                    "deterministic finding, critical data is missing, or confidence is too low for operator use. "
+                    "Only fail may include operator questions or additional recommended_actions; pass and warn "
+                    "must use empty questions and recommended_actions arrays. Keep recommendations within this "
+                    "allowlist: mark_node_suspect, set_gpu_power_limit, run_health_check, snapshot_evidence. "
+                    "Do not invent assets outside the telemetry.\n\n"
                     f"Telemetry JSON: {json.dumps(_thermal_context(state), sort_keys=True)}\n"
                     f"Deterministic finding JSON: {json.dumps(finding, sort_keys=True)}"
                 ),
@@ -197,20 +201,36 @@ def _thermal_context(state: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_thermal_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
     allowed_actions = {"mark_node_suspect", "set_gpu_power_limit", "run_health_check", "snapshot_evidence"}
+    audit_verdict = _audit_verdict(parsed)
+    fail_only_questions = _as_string_list(parsed.get("questions")) if audit_verdict == "fail" else []
+    fail_only_actions = _as_string_list(parsed.get("recommended_actions")) if audit_verdict == "fail" else []
     return {
+        "audit_verdict": audit_verdict,
         "summary": _as_string(parsed.get("summary")),
         "confidence": _as_float(parsed.get("confidence")),
         "affected_assets": _as_string_list(parsed.get("affected_assets")),
         "evidence": _as_string_list(parsed.get("evidence")),
         "risk": _as_string(parsed.get("risk")),
         "recommended_actions": [
-            action for action in _as_string_list(parsed.get("recommended_actions")) if action in allowed_actions
+            action for action in fail_only_actions if action in allowed_actions
         ],
-        "questions": _as_string_list(parsed.get("questions")),
-        "needs_human_review": bool(parsed.get("needs_human_review")),
+        "questions": fail_only_questions,
+        "needs_human_review": audit_verdict == "fail",
         "model": settings.crusoe_multimodal_model or NEMOTRON_OMNI_MODEL,
         "provider": "crusoe",
     }
+
+
+def _audit_verdict(parsed: dict[str, Any]) -> str:
+    verdict = parsed.get("audit_verdict") or parsed.get("verdict")
+    if isinstance(verdict, str):
+        normalized = verdict.strip().lower()
+        if normalized in {"pass", "warn", "fail"}:
+            return normalized
+    confidence = _as_float(parsed.get("confidence"))
+    if confidence is not None and confidence < 0.55:
+        return "fail"
+    return "pass"
 
 
 def _as_string(value: Any) -> str:

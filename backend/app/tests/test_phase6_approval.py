@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import pytest
 from fastapi import HTTPException
 
@@ -13,9 +14,9 @@ from app.agents.domain_agents import (
     build_workload_finding,
 )
 from app.agents.power_orbit_agent import build_power_orbit_finding
+from app.constants import CANONICAL_WORLD_STATE
 from app.db.models import Approval, Command, Incident, MissionPatch, OutboxEvent
 from app.routers.mission_patches import ApprovalRequest, approve_mission_patch, approve_patch_transaction, reject_patch_transaction
-from app.simulator.state_machine import build_simulated_state
 
 
 class _Result:
@@ -57,7 +58,7 @@ class _FakeSession:
 
 
 def _pending_patch() -> MissionPatch:
-    state = build_simulated_state(5)
+    state = _incident_state()
     builders = [
         build_power_orbit_finding,
         build_workload_finding,
@@ -79,6 +80,13 @@ def _pending_patch() -> MissionPatch:
         rollback_plan={},
         approval_required=True,
     )
+
+
+def _incident_state() -> dict:
+    state = deepcopy(CANONICAL_WORLD_STATE)
+    state["thermal"]["highest_temp_c"] = 91
+    state["nodes"][2]["temp_c"] = 91
+    return state
 
 
 def test_approve_transaction_creates_approval_and_queued_commands() -> None:

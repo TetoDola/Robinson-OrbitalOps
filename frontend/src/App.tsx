@@ -8,6 +8,7 @@ import {
   getAgentsStatus,
   getCommands,
   getIncidents,
+  getRadiationRisk,
   getWorldState,
 } from "./api/client";
 import { connectLiveSocket } from "./api/liveSocket";
@@ -60,7 +61,23 @@ export default function App() {
       }
     });
 
-    return connectLiveSocket();
+    const updateRadiationRisk = () => {
+      void getRadiationRisk()
+        .then((response) => {
+          store.setRadiationRisk(response.radiationRisk);
+        })
+        .catch(() => {
+          store.setRadiationRisk(null);
+        });
+    };
+    updateRadiationRisk();
+    const radiationPoll = window.setInterval(updateRadiationRisk, 60000);
+
+    const disconnectLiveSocket = connectLiveSocket();
+    return () => {
+      window.clearInterval(radiationPoll);
+      disconnectLiveSocket();
+    };
   }, []);
 
   return (
