@@ -69,9 +69,9 @@ async def _upsert_agent_statuses(session: AsyncSession) -> None:
             AgentStatusEvent.agent_name == status["agent"],
             AgentStatusEvent.status == status["status"],
             AgentStatusEvent.message == status["message"],
-        )
+        ).order_by(AgentStatusEvent.created_at.asc())
         event_result = await session.execute(event_stmt)
-        existing_event = event_result.scalar_one_or_none()
+        existing_event = event_result.scalars().first()
         if existing_event is None:
             session.add(
                 AgentStatusEvent(
