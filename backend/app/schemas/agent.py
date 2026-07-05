@@ -21,3 +21,21 @@ class AgentStatusItem(BaseModel):
 
 class AgentsStatusResponse(BaseModel):
     agents: list[AgentStatusItem]
+
+
+class AgentFindingItem(BaseModel):
+    id: str
+    agent_name: str
+    severity: str
+    confidence: float
+    affected_assets: list[str]
+    finding: str
+    evidence: list[str]
+    risk: Optional[str] = None
+    recommended_actions: list[str]
+    status: str
+    created_at: datetime
+
+
+class AgentFindingsResponse(BaseModel):
+    findings: list[AgentFindingItem]

@@ -1,5 +1,6 @@
 import type {
   ActiveMissionPatchResponse,
+  AgentFindingsResponse,
   AgentsStatusResponse,
   CommandsResponse,
   IncidentsResponse,
@@ -38,6 +39,10 @@ export function getWorldState(): Promise<WorldStateResponse> {
 
 export function getAgentsStatus(): Promise<AgentsStatusResponse> {
   return fetchJson<AgentsStatusResponse>("/agents/status");
+}
+
+export function getAgentFindings(): Promise<AgentFindingsResponse> {
+  return fetchJson<AgentFindingsResponse>("/agents/findings");
 }
 
 export function getCommands(): Promise<CommandsResponse> {

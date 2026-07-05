@@ -100,6 +100,24 @@ export interface AgentsStatusResponse {
   agents: AgentStatusItem[];
 }
 
+export interface AgentFinding {
+  id: string;
+  agent_name: string;
+  severity: Severity;
+  confidence: number;
+  affected_assets: string[];
+  finding: string;
+  evidence: string[];
+  risk: string | null;
+  recommended_actions: string[];
+  status: string;
+  created_at: string;
+}
+
+export interface AgentFindingsResponse {
+  findings: AgentFinding[];
+}
+
 export interface Incident {
   id: string;
   incident_key: string;
@@ -173,6 +191,11 @@ export type WorldStateUpdatedEvent = LiveEventBase<
 export type AgentStatusUpdatedEvent = LiveEventBase<
   "agent.status.updated",
   Omit<AgentStatusItem, "updated_at"> & { linked_mission_patch_id?: string | null }
+>;
+
+export type AgentFindingCreatedEvent = LiveEventBase<
+  "agent.finding.created",
+  Omit<AgentFinding, "created_at"> & { agent_name: string }
 >;
 
 export type MissionPatchApprovedEvent = LiveEventBase<
@@ -249,6 +272,7 @@ export type BackendLiveEvent =
   | HeartbeatEvent
   | WorldStateUpdatedEvent
   | AgentStatusUpdatedEvent
+  | AgentFindingCreatedEvent
   | MissionPatchApprovedEvent
   | MissionPatchExecutingEvent
   | MissionPatchRejectedEvent

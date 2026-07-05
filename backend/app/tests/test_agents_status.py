@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from app.routers.agents import list_agent_statuses
-from app.schemas.agent import AgentsStatusResponse
+from app.routers.agents import list_agent_findings, list_agent_statuses
+from app.schemas.agent import AgentFindingsResponse, AgentsStatusResponse
 from app.constants import AGENT_SEED_STATUS
 
 
@@ -54,3 +54,38 @@ def test_agents_status_shape() -> None:
     names = {agent.agent for agent in response.agents}
     expected = {seed["agent"] for seed in AGENT_SEED_STATUS}
     assert names == expected
+
+
+class _FindingSession:
+    async def execute(self, _statement):
+        return _Result(
+            [
+                type(
+                    "Finding",
+                    (),
+                    {
+                        "id": "finding-1",
+                        "agent_name": "thermal_physical_agent",
+                        "severity": "RED",
+                        "confidence": 0.9,
+                        "affected_assets": ["node-c"],
+                        "finding": "Node C hotspot is above safe thermal threshold.",
+                        "evidence": ["Node C is hottest asset"],
+                        "risk": "Node C should not receive critical workloads.",
+                        "recommended_actions": ["mark_node_suspect"],
+                        "status": "open",
+                        "created_at": datetime.now(timezone.utc),
+                    },
+                )
+            ]
+        )
+
+
+def test_agent_findings_shape() -> None:
+    response = asyncio.run(list_agent_findings(session=_FindingSession()))
+
+    assert isinstance(response, AgentFindingsResponse)
+    assert len(response.findings) == 1
+    assert response.findings[0].agent_name == "thermal_physical_agent"
+    assert response.findings[0].confidence == 0.9
+    assert response.findings[0].affected_assets == ["node-c"]

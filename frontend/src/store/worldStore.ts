@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 
 import type {
+  AgentFinding,
   AgentStatusItem,
   BackendLiveEvent,
   Command,
@@ -65,6 +66,7 @@ interface WorldStore {
   scenarioRunId: string | null;
   telemetry: TelemetrySnapshot;
   agents: AgentStatusItem[];
+  agentFindings: AgentFinding[];
   incidents: Incident[];
   missionPatch: MissionPatch | null;
   commands: Command[];
@@ -80,6 +82,8 @@ interface WorldStore {
   setTelemetry: (telemetry: TelemetrySnapshot) => void;
   setAgents: (agents: AgentStatusItem[]) => void;
   upsertAgent: (agent: AgentStatusItem) => void;
+  setAgentFindings: (findings: AgentFinding[]) => void;
+  upsertAgentFinding: (finding: AgentFinding) => void;
   setIncidents: (incidents: Incident[]) => void;
   setMissionPatch: (missionPatch: MissionPatch | null) => void;
   patchMissionPatch: (id: string, patch: Partial<MissionPatch>) => void;
@@ -99,6 +103,7 @@ export const useWorldStore = create<WorldStore>()(
     scenarioRunId: null,
     telemetry: initialTelemetry,
     agents: [],
+    agentFindings: [],
     incidents: [],
     missionPatch: null,
     commands: [],
@@ -118,6 +123,21 @@ export const useWorldStore = create<WorldStore>()(
       set((state) => {
         const agents = state.agents.filter((item) => item.agent !== agent.agent);
         return { agents: [...agents, agent].sort((a, b) => a.agent.localeCompare(b.agent)) };
+      }),
+    setAgentFindings: (agentFindings) =>
+      set({
+        agentFindings: [...agentFindings].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        ),
+      }),
+    upsertAgentFinding: (finding) =>
+      set((state) => {
+        const agentFindings = state.agentFindings.filter((item) => item.id !== finding.id);
+        return {
+          agentFindings: [...agentFindings, finding].sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+          ),
+        };
       }),
     setIncidents: (incidents) => set({ incidents }),
     setMissionPatch: (missionPatch) => set({ missionPatch }),
@@ -173,9 +193,23 @@ export const useWorldStore = create<WorldStore>()(
           };
         }
 
+        if (event.type === "agent.finding.created") {
+          const payload = event.payload as Omit<AgentFinding, "created_at">;
+          const finding = { ...payload, created_at: event.timestamp };
+          const agentFindings = state.agentFindings.filter((item) => item.id !== finding.id);
+          return {
+            agentFindings: [...agentFindings, finding].sort(
+              (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+            ),
+            lastEvent: event,
+            lastEventAt: event.timestamp,
+          };
+        }
+
         if (event.type === "simulator.reset") {
           return {
             incidents: [],
+            agentFindings: [],
             missionPatch: null,
             commands: [],
             patchMode: "pending",
