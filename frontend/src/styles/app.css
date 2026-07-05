@@ -173,11 +173,15 @@ button:focus-visible,
   font-weight: 700;
 }
 
-.rail-brand p {
-  margin: 5px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.25;
+.brand-logo-heading {
+  line-height: 0;
+}
+
+.brand-logo {
+  display: block;
+  width: min(188px, 100%);
+  height: auto;
+  filter: invert(1) brightness(1.18);
 }
 
 .rail-nav {

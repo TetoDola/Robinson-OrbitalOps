@@ -123,7 +123,7 @@ function reconcileAgent(agent: AgentStatusItem, missionPatch: MissionPatch | nul
         severity: "INFO",
         message:
           missionPatch?.status === "pending_approval"
-            ? "Monitoring assigned domain; current Mission Patch is scoped to another detector."
+            ? "Monitoring assigned domain; current Mission Patch is scoped to another agent."
             : "Monitoring assigned domain; no Mission Patch is currently pending.",
         linked_mission_patch_id: null,
       };
@@ -461,7 +461,7 @@ function buildAgentFlowNodes({
     lines: [
       isCommander
         ? `${openFindingCount} open domain finding${openFindingCount === 1 ? "" : "s"} under review.`
-        : clip(latestFinding?.finding ?? "No open finding from this detector."),
+        : clip(latestFinding?.finding ?? "No open finding from this agent."),
     ],
   };
 
@@ -477,7 +477,7 @@ function buildAgentFlowNodes({
           ? "Grouping open findings into a mission patch."
           : isCommander
             ? clip(agent.message)
-            : "No active Mission Patch for this detector.",
+            : "No active Mission Patch for this agent.",
     ],
   };
 
@@ -909,7 +909,7 @@ function AgentDetailModal({
     : patchActions.map((action) => String(action.type));
   const evidence = latestFinding?.evidence?.length
     ? latestFinding.evidence
-    : ["No evidence packet from this detector."];
+    : ["No evidence packet from this agent."];
   const assets = latestFinding?.affected_assets?.length ? latestFinding.affected_assets : [];
   const signalRows = buildSignalRows(
     agent.agent,
@@ -980,9 +980,9 @@ function AgentDetailModal({
       >
         <header className="agent-modal-header">
           <div>
-            <div className="eyebrow">detector inspector</div>
+            <div className="eyebrow">simulation inspector</div>
             <h2 id="agent-modal-title">{agent.display_name}</h2>
-            <p>{detectorScope[agent.agent] ?? "Telemetry detector for the selected operational domain."}</p>
+            <p>{detectorScope[agent.agent] ?? "Simulation agent for the selected operational domain."}</p>
           </div>
           <button className="close-btn" type="button" aria-label="Close agent details" onClick={onClose}>
             x
@@ -1106,7 +1106,7 @@ function AgentDetailModal({
                 ))}
               </ol>
               <div className="agent-approval-note">
-                Approval is only needed because this detector raised an unsafe condition. Approving here executes the entire validated Mission Patch ({patchCommandCount} commands total), not just this one command group.
+                Approval is only needed because this agent raised an unsafe condition. Approving here executes the entire validated Mission Patch ({patchCommandCount} commands total), not just this one command group.
               </div>
               {approvalError ? <p className="approval-error">{approvalError}</p> : null}
               <div className="agent-approval-buttons">
@@ -1132,7 +1132,7 @@ function AgentDetailModal({
                 {latestFinding?.status ?? "none"}
               </b>
             </div>
-            <p>{latestFinding?.risk ?? "No domain risk is currently above this detector's trigger threshold."}</p>
+            <p>{latestFinding?.risk ?? "No domain risk is currently above this agent's trigger threshold."}</p>
             <div className="agent-evidence-grid">
               <div>
                 <span className="label">evidence</span>

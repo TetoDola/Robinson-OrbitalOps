@@ -262,7 +262,7 @@ export default function SimulationControls() {
       <div className="section-header compact">
         <div>
           <div className="eyebrow">Simulate</div>
-          <h3 className="panel-title">Detector input</h3>
+          <h3 className="panel-title">Simulations</h3>
         </div>
         <strong className={busyIssue ? "status-cyan" : "status-green"}>{busyIssue ? "sending" : "ready"}</strong>
       </div>
@@ -323,7 +323,7 @@ export default function SimulationControls() {
       <div className="workflow-run" aria-label="Live workflow run">
         {(workflowEvents.length
           ? workflowEvents
-          : [{ id: "idle", time: "", label: "Monitoring", detail: "Waiting for detector input", status: "info" as const }]
+          : [{ id: "idle", time: "", label: "Monitoring", detail: "Waiting for simulation input", status: "info" as const }]
         )
           .slice(0, 7)
           .map((event) => (

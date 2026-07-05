@@ -1,3 +1,4 @@
+import robinsonLogoUrl from "../../assets/ROBINSON-LOGO.svg";
 import { useWorldStore } from "../store/worldStore";
 
 const speeds = [1, 60, 600];
@@ -35,21 +36,14 @@ export default function TelemetryPanel() {
   const missionPatch = useWorldStore((state) => state.missionPatch);
 
   return (
-    <aside className="left-rail" aria-label="Overview">
+    <aside className="left-rail" aria-label="Mission status">
       <div className="rail-brand">
-        <div className="brand-mark">OPS</div>
         <div>
-          <h1>Robinson</h1>
-          <p>Neon Noir command</p>
+          <h1 className="brand-logo-heading">
+            <img className="brand-logo" src={robinsonLogoUrl} alt="Robinson" />
+          </h1>
         </div>
       </div>
-
-      <nav className="rail-nav" aria-label="Primary">
-        <button className="nav-item active" type="button">
-          <span className="nav-icon" aria-hidden="true" />
-          Overview
-        </button>
-      </nav>
 
       <section className="rail-section">
         <div className="section-header">
@@ -71,34 +65,33 @@ export default function TelemetryPanel() {
       </section>
 
       <section className="rail-section">
-        <div className="eyebrow">Overview</div>
-      <div className="metric-grid">
-        <div className="metric">
-          <div className="label">speed</div>
-          <div className="metric-value">{telemetry.speed}</div>
-          <div className="metric-note">orbital velocity</div>
+        <div className="metric-grid">
+          <div className="metric">
+            <div className="label">speed</div>
+            <div className="metric-value">{telemetry.speed}</div>
+            <div className="metric-note">orbital velocity</div>
+          </div>
+          <div className="metric">
+            <div className="label">altitude</div>
+            <div className="metric-value">{telemetry.altitude}</div>
+            <div className="metric-note">service orbit</div>
+          </div>
+          <div className="metric wide">
+            <div className="label">location</div>
+            <div className="metric-value">{telemetry.location}</div>
+            <div className="metric-note">{telemetry.groundTrack}</div>
+          </div>
+          <div className="metric">
+            <div className="label">training load</div>
+            <div className="metric-value">{telemetry.computeLoad}</div>
+            <div className="metric-note">14-day run active</div>
+          </div>
+          <div className="metric">
+            <div className="label">agent latency</div>
+            <div className="metric-value">{telemetry.latency}</div>
+            <div className="metric-note">command loop</div>
+          </div>
         </div>
-        <div className="metric">
-          <div className="label">altitude</div>
-          <div className="metric-value">{telemetry.altitude}</div>
-          <div className="metric-note">service orbit</div>
-        </div>
-        <div className="metric wide">
-          <div className="label">location</div>
-          <div className="metric-value">{telemetry.location}</div>
-          <div className="metric-note">{telemetry.groundTrack}</div>
-        </div>
-        <div className="metric">
-          <div className="label">training load</div>
-          <div className="metric-value">{telemetry.computeLoad}</div>
-          <div className="metric-note">14-day run active</div>
-        </div>
-        <div className="metric">
-          <div className="label">agent latency</div>
-          <div className="metric-value">{telemetry.latency}</div>
-          <div className="metric-note">command loop</div>
-        </div>
-      </div>
       </section>
 
       <section className="rail-section">

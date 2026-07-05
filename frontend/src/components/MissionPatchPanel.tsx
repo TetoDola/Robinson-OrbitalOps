@@ -40,13 +40,6 @@ function humanize(value: string): string {
   return value.replace(/[_-]+/g, " ");
 }
 
-function formatClock(value: string | undefined): string {
-  if (!value) return "--:--";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "--:--";
-  return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
 function nodeLabel(node: NodeState): string {
   const temp = typeof node.temp_c === "number" ? `, ${node.temp_c.toFixed(1)} C` : "";
   const ecc = typeof node.ecc_errors === "number" ? `, ECC ${node.ecc_errors}` : "";
@@ -71,23 +64,6 @@ function nodeSeverityClass(node: NodeState): string {
     return "node-state status-orange";
   }
   return "node-state";
-}
-
-function severityClass(value: string): string {
-  const severity = value.toLowerCase();
-  if (severity.includes("approval") || severity.includes("red") || severity.includes("critical")) {
-    return "severity red";
-  }
-  if (severity.includes("orange") || severity.includes("warn")) {
-    return "severity orange";
-  }
-  if (severity.includes("yellow")) {
-    return "severity yellow";
-  }
-  if (severity.includes("info") || severity.includes("monitor") || severity.includes("healthy")) {
-    return "severity info";
-  }
-  return "severity info";
 }
 
 function RackDiagram({ hasIssue }: { hasIssue: boolean }) {
@@ -147,9 +123,8 @@ export default function MissionPatchPanel() {
   }
 
   const nodes = worldState?.nodes ?? [];
-  const visibleIncidents = incidents;
   const maxNodeTemp = nodes.reduce((max, node) => Math.max(max, node.temp_c ?? 0), 0);
-  const hasIssue = Boolean(missionPatch || visibleIncidents.length > 0 || maxNodeTemp >= 80);
+  const hasIssue = Boolean(missionPatch || incidents.length > 0 || maxNodeTemp >= 80);
   const assetStateLabel = resetIdle ? "monitoring" : missionPatch ? "review required" : "attention";
 
   return (
@@ -239,27 +214,6 @@ export default function MissionPatchPanel() {
             onClose={() => setIrView(null)}
           />
         ) : null}
-      </section>
-
-      <section className="rail-section incidents-panel" aria-label="Active incidents">
-        <div className="section-header compact">
-          <div>
-            <div className="eyebrow">Active incidents</div>
-            <h3 className="panel-title">{visibleIncidents.length} open</h3>
-          </div>
-        </div>
-        <div className="incident-list">
-          {visibleIncidents.map((incident) => (
-            <div className="incident-row" key={incident.id}>
-              <span className="incident-time">{formatClock(incident.created_at)}</span>
-              <span>
-                <strong>{incident.title}</strong>
-                {incident.summary}
-              </span>
-              <b className={severityClass(String(incident.severity))}>{incident.status}</b>
-            </div>
-          ))}
-        </div>
       </section>
     </aside>
   );

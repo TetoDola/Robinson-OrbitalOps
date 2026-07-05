@@ -397,8 +397,8 @@ export const useWorldStore = create<WorldStore>()(
             patchAgents,
             isUpdatedPatch ? "Patch evidence refreshed" : "Patch handoff",
             isUpdatedPatch
-              ? "Mission Patch refreshed with current detector evidence."
-              : "Mission Patch included this detector report in the approval package.",
+              ? "Mission Patch refreshed with current simulation evidence."
+              : "Mission Patch included this agent report in the approval package.",
             "running",
             { dedupeKey: `${event.type}:${payload.id}:handoff`, missionPatchId: payload.id },
           );
