@@ -5,6 +5,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
+import { Button } from "@astryxdesign/core/Button";
+
 import { approveMissionPatch } from "../api/client";
 import { useWorldStore, type PatchMode } from "../store/worldStore";
 import type { Incident, MissionPatchAction, NodeState } from "../types/backend";
@@ -285,24 +287,14 @@ export default function MissionPatchPanel() {
         </ol>
         {resetIdle ? (
           <div className="patch-buttons">
-            <button className="patch-btn" disabled type="button">
-              Monitoring Baseline
-            </button>
+            <Button label="Monitoring baseline" variant="ghost" isDisabled />
           </div>
         ) : (
           <div className="patch-buttons">
-            <button className="patch-btn primary" onClick={() => void approvePatch()} type="button">
-              Approve
-            </button>
-            <button className="patch-btn" onClick={() => setPatchMode("replan")} type="button">
-              Replan
-            </button>
-            <button className="patch-btn" onClick={() => setPatchMode("modify")} type="button">
-              Modify
-            </button>
-            <button className="patch-btn danger" onClick={() => setPatchMode("reject")} type="button">
-              Reject
-            </button>
+            <Button label="Approve" variant="primary" onClick={() => void approvePatch()} />
+            <Button label="Replan" variant="secondary" onClick={() => setPatchMode("replan")} />
+            <Button label="Modify" variant="secondary" onClick={() => setPatchMode("modify")} />
+            <Button label="Reject" variant="destructive" onClick={() => setPatchMode("reject")} />
           </div>
         )}
       </section>

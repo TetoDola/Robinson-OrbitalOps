@@ -9,7 +9,6 @@ import {
 } from "./api/client";
 import { connectLiveSocket } from "./api/liveSocket";
 import AssetConsole from "./components/AssetConsole";
-import CommandBar from "./components/CommandBar";
 import FleetView from "./components/FleetView";
 import { useAppStore } from "./store/appStore";
 import { useWorldStore } from "./store/worldStore";
@@ -53,7 +52,6 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <CommandBar />
       <div className="view">{view === "fleet" ? <FleetView /> : <AssetConsole />}</div>
     </div>
   );

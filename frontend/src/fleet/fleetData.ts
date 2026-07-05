@@ -64,6 +64,37 @@ export const FLEET_QUEUE: FleetDecision[] = [
   { id: "patch-039", kind: "patch", asset: "AKJA-05", severity: "caution", label: "patch-039 · AKJA-05", detail: "Shed non-critical compute to hold power reserve through eclipse." },
 ];
 
+export function problemTitle(note: string): string {
+  return note.split("·")[0]?.trim() || note;
+}
+
+export interface FleetIrTarget {
+  id: string;
+  status: string;
+  tempC: number;
+}
+
+/** IR thermal cam target for fleet satellites with a thermal issue. */
+export function fleetIrTarget(assetId: string): FleetIrTarget | null {
+  const asset = FLEET.find((a) => a.id === assetId);
+  if (!asset || asset.health === "nominal") {
+    return null;
+  }
+  const note = asset.note.toLowerCase();
+  if (!note.includes("thermal")) {
+    return null;
+  }
+  return { id: "Node C", status: "unsafe", tempC: 96.4 };
+}
+
+/** Satellites with an active issue, most severe first. */
+export function fleetAlerts() {
+  const rank = { critical: 0, caution: 1, nominal: 2 };
+  return FLEET.filter((a) => a.health !== "nominal").sort(
+    (a, b) => rank[a.health] - rank[b.health],
+  );
+}
+
 export const FLEET_AGG = {
   total: 12,
   critical: 2,

@@ -1,16 +1,28 @@
 import { useEffect, useRef } from "react";
 
-import { createFleetGlobe } from "../scene/fleetGlobe";
+import { useAppStore } from "../store/appStore";
+import { createFleetGlobe, type FleetGlobe as FleetScene } from "../scene/fleetGlobe";
 
 export default function FleetGlobe() {
   const ref = useRef<HTMLDivElement | null>(null);
+  const sceneRef = useRef<FleetScene | null>(null);
+  const openFleetChat = useAppStore((s) => s.openFleetChat);
+  const fleetChatAssetId = useAppStore((s) => s.fleetChatAssetId);
 
   useEffect(() => {
     if (!ref.current) return undefined;
-    const globe = createFleetGlobe(ref.current);
-    globe.start();
-    return () => globe.destroy();
-  }, []);
+    const scene = createFleetGlobe(ref.current, { onAssetClick: openFleetChat });
+    sceneRef.current = scene;
+    scene.start();
+    return () => {
+      scene.destroy();
+      sceneRef.current = null;
+    };
+  }, [openFleetChat]);
 
-  return <div className="const-globe3d" ref={ref} aria-hidden="true" />;
+  useEffect(() => {
+    sceneRef.current?.focusAsset(fleetChatAssetId);
+  }, [fleetChatAssetId]);
+
+  return <div className="fleet-scene" ref={ref} aria-label="Fleet constellation" />;
 }

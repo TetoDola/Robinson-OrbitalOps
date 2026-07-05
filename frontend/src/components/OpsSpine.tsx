@@ -1,8 +1,10 @@
+import { useAppStore } from "../store/appStore";
 import { useWorldStore } from "../store/worldStore";
 
 const STAGES = ["Monitor", "Detect", "Explain", "Propose", "Approve", "Execute", "Verify"];
 
 export default function OpsSpine() {
+  const goFleet = useAppStore((s) => s.goFleet);
   const patchMode = useWorldStore((s) => s.patchMode);
   const missionPatch = useWorldStore((s) => s.missionPatch);
   const demoResetAt = useWorldStore((s) => s.demoResetAt);
@@ -28,6 +30,9 @@ export default function OpsSpine() {
 
   return (
     <div className={`ops-spine${critical ? " is-critical" : ""}`} aria-label="Ops loop">
+      <button className="ops-fleet-back" onClick={goFleet} type="button">
+        ‹ Fleet
+      </button>
       <div className="ops-track">
         <div className="ops-fill" style={{ width: `${(cur / (STAGES.length - 1)) * 100}%` }} />
       </div>

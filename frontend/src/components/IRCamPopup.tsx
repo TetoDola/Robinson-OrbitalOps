@@ -13,6 +13,7 @@ interface IRCamPopupProps {
   node: IrNodeTarget;
   anchor: { x: number; y: number };
   onClose: () => void;
+  className?: string;
 }
 
 const IR_W = 320;
@@ -181,7 +182,7 @@ function drawOverlay(ctx: CanvasRenderingContext2D, spotTempC: number, elapsedS:
   ctx.fillText("IR-01 9Hz NR", 12, 20);
 }
 
-export default function IRCamPopup({ node, anchor, onClose }: IRCamPopupProps) {
+export default function IRCamPopup({ node, anchor, onClose, className }: IRCamPopupProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
 
@@ -278,7 +279,13 @@ export default function IRCamPopup({ node, anchor, onClose }: IRCamPopupProps) {
 
   return createPortal(
     <>
-      <div className="ir-popup" ref={popupRef} style={style} role="dialog" aria-label={`IR thermal view of ${node.id}`}>
+      <div
+        className={className ? `ir-popup ${className}` : "ir-popup"}
+        ref={popupRef}
+        style={style}
+        role="dialog"
+        aria-label={`IR thermal view of ${node.id}`}
+      >
         <div className="ir-head">
           <div>
             <div className="eyebrow">ir thermal cam</div>
